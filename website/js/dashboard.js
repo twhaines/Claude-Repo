@@ -2,6 +2,7 @@
   'use strict';
   const { PANEL_DEFS } = window.PanelRegistry;
   const M = window.MockData;
+  const LD = window.LiveData;
 
   const board = document.getElementById('board');
   const tabbar = document.getElementById('tabbar');
@@ -9,8 +10,23 @@
   const paletteInput = document.getElementById('paletteInput');
   const paletteResults = document.getElementById('paletteResults');
 
-  const DEFAULT_PANELS = ['chart', 'heatmap', 'quote-monitor', 'live-news', 'social-volume'];
-  let panels = []; // { uid, defId, destroy }
+  const LAYOUT_KEY = 'vt-layout';
+
+  // A futures-trader's pre-market routine: macro calendar and news first,
+  // then the instruments themselves, then positioning context.
+  const DEFAULT_LAYOUT = [
+    { defId: 'economic-calendar' },
+    { defId: 'live-news' },
+    { defId: 'news-globe' },
+    { defId: 'chart', config: { ticker: 'ES=F', tf: '1h' } },
+    { defId: 'quote-monitor' },
+    { defId: 'cot-positioning' },
+    { defId: 'heatmap' },
+    { defId: 'market-mood' },
+    { defId: 'social-volume' }
+  ];
+
+  let panels = []; // { uid, defId, destroy, config, sizeOverride }
   let uidSeq = 1;
 
   const TABS = [{ id: 't1', name: 'Tab 1' }];
@@ -18,43 +34,121 @@
 
   function findDef(defId) { return PANEL_DEFS.find((d) => d.id === defId); }
 
-  function addPanel(defId) {
+  function saveLayout() {
+    const data = Array.from(board.children).map((el) => {
+      const p = panels.find((x) => x.uid === el.dataset.uid);
+      if (!p) return null;
+      return { defId: p.defId, config: p.config || {}, sizeOverride: p.sizeOverride || null };
+    }).filter(Boolean);
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(data)); } catch (e) { /* storage unavailable */ }
+  }
+  function loadLayout() {
+    try {
+      const raw = localStorage.getItem(LAYOUT_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      return Array.isArray(data) && data.length ? data : null;
+    } catch (e) { return null; }
+  }
+
+  function addPanel(defId, savedConfig, savedSize) {
     const def = findDef(defId);
     if (!def) return;
     const uid = 'p' + uidSeq++;
     const panelEl = document.createElement('div');
-    panelEl.className = `panel size-${def.size}`;
+    panelEl.className = `panel size-${savedSize || def.size}`;
     panelEl.draggable = true;
     panelEl.dataset.uid = uid;
     panelEl.innerHTML = `
       <div class="panel__head">
         <span class="panel__title">${def.title}</span>
         <span class="panel__subtitle">${def.desc}</span>
+        <span class="data-badge" style="display:none;"></span>
         <div class="panel__controls">
           <span class="panel__help" title="${def.desc}">?</span>
           <span class="panel__close" title="Close">✕</span>
         </div>
       </div>
-      <div class="panel__body"></div>`;
+      <div class="panel__body"></div>
+      <span class="panel__resize" draggable="false" title="Drag to resize">◢</span>`;
     board.appendChild(panelEl);
 
     const body = panelEl.querySelector('.panel__body');
-    let destroy = null;
+    const badgeEl = panelEl.querySelector('.data-badge');
+    const record = { uid, defId, destroy: null, config: savedConfig || {}, sizeOverride: savedSize || null };
+    panels.push(record);
+
+    const ctx = {
+      uid,
+      config: record.config,
+      setConfig(patch) { Object.assign(record.config, patch); saveLayout(); },
+      setBadge(status) {
+        if (!status) { badgeEl.style.display = 'none'; return; }
+        badgeEl.style.display = '';
+        badgeEl.textContent = status.toUpperCase();
+        badgeEl.className = 'data-badge ' + (status === 'live' ? 'live' : 'sim');
+      }
+    };
+
     try {
-      destroy = def.render(body) || null;
+      const result = def.render(body, ctx);
+      if (typeof result === 'function') record.destroy = result;
     } catch (err) {
       body.innerHTML = `<div style="color:var(--red);font-size:11px;">Panel failed to load: ${err.message}</div>`;
       console.error(err);
     }
 
     panelEl.querySelector('.panel__close').addEventListener('click', () => {
-      if (destroy) destroy();
+      if (record.destroy) record.destroy();
       panelEl.remove();
       panels = panels.filter((p) => p.uid !== uid);
+      saveLayout();
     });
 
     attachDrag(panelEl);
-    panels.push({ uid, defId, destroy });
+    attachResize(panelEl, record);
+    saveLayout();
+  }
+
+  // ---------- resize ----------
+  const SIZE_COLS = { sm: 3, md: 4, lg: 6, xl: 8 };
+  const SIZE_ROWS = { sm: 8, md: 12, lg: 18, xl: 18 };
+  function attachResize(panelEl, record) {
+    const handle = panelEl.querySelector('.panel__resize');
+    let startX, startY, startCols, startRows;
+    function onMove(e) {
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      const colWidth = board.clientWidth / 12;
+      const rowHeight = 26 + 10; // grid-auto-rows + gap
+      const newCols = Math.max(2, Math.min(12, Math.round(startCols + dx / colWidth)));
+      const newRows = Math.max(6, Math.round(startRows + dy / rowHeight));
+      panelEl.style.gridColumn = `span ${newCols}`;
+      panelEl.style.gridRow = `span ${newRows}`;
+      record.sizeOverride = { cols: newCols, rows: newRows };
+    }
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      saveLayout();
+    }
+    handle.addEventListener('dragstart', (e) => e.preventDefault());
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const def = findDef(record.defId);
+      const rect = panelEl.getBoundingClientRect();
+      const colWidth = board.clientWidth / 12;
+      startCols = record.sizeOverride ? record.sizeOverride.cols : SIZE_COLS[def.size];
+      startRows = record.sizeOverride ? record.sizeOverride.rows : SIZE_ROWS[def.size];
+      startX = e.clientX; startY = e.clientY;
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+    if (record.sizeOverride) {
+      panelEl.style.gridColumn = `span ${record.sizeOverride.cols}`;
+      panelEl.style.gridRow = `span ${record.sizeOverride.rows}`;
+    }
   }
 
   // ---------- drag to reorder ----------
@@ -68,6 +162,7 @@
     panelEl.addEventListener('dragend', () => {
       panelEl.classList.remove('dragging');
       board.querySelectorAll('.panel').forEach((p) => p.classList.remove('drag-over'));
+      saveLayout();
     });
     panelEl.addEventListener('dragover', (e) => {
       e.preventDefault();
@@ -159,12 +254,39 @@
   document.addEventListener('keydown', (e) => {
     const tag = (e.target.tagName || '').toLowerCase();
     const typing = tag === 'input' || tag === 'textarea' || e.target.isContentEditable;
-    if (e.key === '/' && !typing && paletteOverlay.classList.contains('hidden')) {
+    if (e.key === '/' && !typing && paletteOverlay.classList.contains('hidden') && settingsOverlay.classList.contains('hidden')) {
       e.preventDefault();
       openPalette();
-    } else if (e.key === 'Escape' && !paletteOverlay.classList.contains('hidden')) {
-      closePalette();
+    } else if (e.key === 'Escape') {
+      if (!paletteOverlay.classList.contains('hidden')) closePalette();
+      if (!settingsOverlay.classList.contains('hidden')) closeSettings();
     }
+  });
+
+  // ---------- settings ----------
+  const settingsOverlay = document.getElementById('settingsOverlay');
+  const finnhubKeyInput = document.getElementById('finnhubKeyInput');
+  function openSettings() {
+    finnhubKeyInput.value = (LD.getSettings().finnhubKey) || '';
+    settingsOverlay.classList.remove('hidden');
+  }
+  function closeSettings() { settingsOverlay.classList.add('hidden'); }
+  document.getElementById('openSettingsBtn').addEventListener('click', openSettings);
+  document.getElementById('settingsClose').addEventListener('click', closeSettings);
+  settingsOverlay.addEventListener('click', (e) => { if (e.target === settingsOverlay) closeSettings(); });
+  document.getElementById('settingsSave').addEventListener('click', () => {
+    LD.saveSettings({ finnhubKey: finnhubKeyInput.value.trim() });
+    closeSettings();
+  });
+
+  // ---------- reset layout ----------
+  document.getElementById('resetLayoutBtn').addEventListener('click', () => {
+    if (!confirm('Reset to the default futures pre-market layout? This clears your current panels.')) return;
+    panels.forEach((p) => { if (p.destroy) p.destroy(); });
+    panels = [];
+    board.innerHTML = '';
+    localStorage.removeItem(LAYOUT_KEY);
+    DEFAULT_LAYOUT.forEach((p) => addPanel(p.defId, p.config));
   });
 
   // ---------- tabs ----------
@@ -197,7 +319,6 @@
   renderTabs();
 
   // ---------- clocks & market status ----------
-  function pad(n) { return String(n).padStart(2, '0'); }
   function updateClocks() {
     const now = new Date();
     const zones = { LDN: 'Europe/London', NY: 'America/New_York', TYO: 'Asia/Tokyo' };
@@ -220,11 +341,7 @@
   updateClocks();
   setInterval(updateClocks, 1000 * 15);
 
-  document.getElementById('feedbackLink').addEventListener('click', (e) => {
-    e.preventDefault();
-    alert('Feedback — this is a demo build. Wire this up to your support channel of choice.');
-  });
-
   // ---------- boot ----------
-  DEFAULT_PANELS.forEach(addPanel);
+  const saved = loadLayout();
+  (saved || DEFAULT_LAYOUT).forEach((p) => addPanel(p.defId, p.config, p.sizeOverride));
 })();

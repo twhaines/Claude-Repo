@@ -45,6 +45,25 @@ html, body { height: 100%; overflow: hidden; }
 .status-dot.open { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .topbar__feedback { font-size: 11px; color: var(--text-dim); }
 .topbar__feedback:hover { color: var(--accent); }
+.topbar__icon { color: var(--text-dim); font-size: 14px; cursor: pointer; }
+.topbar__icon:hover { color: var(--accent); }
+
+.data-badge { font-size: 9px; letter-spacing: 0.06em; padding: 1px 5px; border-radius: 2px; margin-left: 6px; }
+.data-badge.live { color: var(--green); border: 1px solid var(--green-dim); }
+.data-badge.sim { color: var(--text-dim); border: 1px solid var(--panel-border-bright); }
+
+.panel__resize {
+  position: absolute;
+  right: 0; bottom: 0;
+  width: 14px; height: 14px;
+  cursor: nwse-resize;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+  user-select: none;
+}
+.panel__resize:hover { color: var(--accent); }
 
 /* Tab bar */
 .tabbar {
@@ -95,6 +114,7 @@ html, body { height: 100%; overflow: hidden; }
 }
 
 .panel {
+  position: relative;
   border: 1px solid var(--panel-border);
   background: var(--panel-bg);
   border-radius: 3px;
