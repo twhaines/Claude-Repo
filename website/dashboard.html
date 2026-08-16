@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vintage Terminal — Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><rect width=%2216%22 height=%2216%22 fill=%22%2308090b%22/><rect x=%223%22 y=%229%22 width=%222%22 height=%224%22 fill=%22%23ff9500%22/><rect x=%227%22 y=%225%22 width=%222%22 height=%228%22 fill=%22%23ff9500%22/><rect x=%2211%22 y=%227%22 width=%222%22 height=%226%22 fill=%22%23ff9500%22/></svg>">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body>
+
+<div class="app">
+  <div class="topbar">
+    <a class="brand" href="index.html" style="cursor:pointer"><span class="brand__mark"></span>VINTAGE TERMINAL</a>
+    <div class="topbar__search" id="openPaletteBtn">
+      <span>⌕</span><span>Search by name or code…</span><kbd>/</kbd>
+    </div>
+    <div class="topbar__status">
+      <span class="status-dot" id="marketDot"></span>
+      <span id="marketStatus">Markets closed</span>
+    </div>
+    <div class="topbar__clocks">
+      <span><b>LDN</b><span id="clockLDN">--:--</span></span>
+      <span><b>NY</b><span id="clockNY">--:--</span></span>
+      <span><b>TYO</b><span id="clockTYO">--:--</span></span>
+    </div>
+    <a class="topbar__feedback" href="#" id="feedbackLink">Feedback</a>
+  </div>
+
+  <div class="tabbar" id="tabbar"></div>
+
+  <div class="board" id="board"></div>
+</div>
+
+<div class="palette-overlay hidden" id="paletteOverlay">
+  <div class="palette">
+    <div class="palette__head">
+      <div><b>ADD A PANEL</b><span>press / with a code for quick access</span></div>
+      <div class="palette__close" id="paletteClose">ESC to close</div>
+    </div>
+    <div class="palette__search">
+      <input type="text" id="paletteInput" placeholder="Search by name or code, Enter to open" autocomplete="off">
+    </div>
+    <div class="palette__results" id="paletteResults"></div>
+  </div>
+</div>
+
+<script src="js/mock-data.js"></script>
+<script src="js/panels/render.js"></script>
+<script src="js/dashboard.js"></script>
+</body>
+</html>
