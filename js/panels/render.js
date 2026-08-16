@@ -1,0 +1,852 @@
+/* Vintage Terminal — panel registry & renderers.
+   Every panel tries LiveData first and falls back to MockData on any
+   failure (missing key, CORS, network, rate limit) — see live-data.js. */
+(function (global) {
+  'use strict';
+  const M = window.MockData;
+  const LD = window.LiveData;
+
+  function h(html) {
+    const t = document.createElement('template');
+    t.innerHTML = html.trim();
+    return t.content.firstElementChild;
+  }
+  function pctSpan(pct) {
+    const cls = pct >= 0 ? 'up' : 'down';
+    return `<span class="${cls}">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span>`;
+  }
+  function money(n) {
+    if (Math.abs(n) >= 1e12) return '$' + (n / 1e12).toFixed(2) + 'T';
+    if (Math.abs(n) >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
+    if (Math.abs(n) >= 1e6) return '$' + (n / 1e6).toFixed(2) + 'M';
+    return '$' + n.toFixed(2);
+  }
+  function fitCanvas(canvas) {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.max(1, rect.width * dpr);
+    canvas.height = Math.max(1, rect.height * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.scale(dpr, dpr);
+    return { ctx, w: rect.width, h: rect.height };
+  }
+
+  // ---------- live/mock data helpers ----------
+  async function liveQuote(sym) {
+    try {
+      const q = await LD.getQuote(sym.t);
+      if (typeof q.price !== 'number' || Number.isNaN(q.price)) throw new Error('bad quote');
+      return { price: q.price, chgPct: q.chgPct, live: true };
+    } catch (e) {
+      const l = M.getLive(sym);
+      return { price: l.price, chgPct: l.chgPct, live: false };
+    }
+  }
+  async function batchQuotes(symbols) {
+    const results = await Promise.all(symbols.map(liveQuote));
+    const anyLive = results.some((r) => r.live);
+    return { results, anyLive };
+  }
+
+  const TF_MAP = {
+    '1m': { range: '1d', interval: '1m' },
+    '30m': { range: '5d', interval: '30m' },
+    '1h': { range: '1mo', interval: '60m' },
+    D: { range: '3mo', interval: '1d' },
+    W: { range: '2y', interval: '1wk' }
+  };
+  const TF_FALLBACK = {
+    '1m': { points: 90, vol: 0.003 }, '30m': { points: 80, vol: 0.006 },
+    '1h': { points: 70, vol: 0.009 }, D: { points: 60, vol: 0.018 }, W: { points: 52, vol: 0.035 }
+  };
+  async function getSeries(symbolStr, tf, fallbackBase) {
+    const map = TF_MAP[tf] || TF_MAP.D;
+    try {
+      const hist = await LD.getHistory(symbolStr, map.range, map.interval);
+      if (!hist.length || hist.length < 5) throw new Error('too few points');
+      return { data: hist, live: true };
+    } catch (e) {
+      const fb = TF_FALLBACK[tf] || TF_FALLBACK.D;
+      return { data: M.generateOHLC(fallbackBase, fb.points, fb.vol), live: false };
+    }
+  }
+
+  function tickerOptions(selected) {
+    return M.ALL_SYMBOLS.map((s) => `<option value="${s.t}" ${s.t === selected ? 'selected' : ''}>${s.t} — ${s.name}</option>`).join('');
+  }
+
+  // ---------- canvas drawing primitives ----------
+  function drawCandles(canvas, data) {
+    const fit = fitCanvas(canvas);
+    const ctx = fit.ctx, w = fit.w, h = fit.h;
+    ctx.clearRect(0, 0, w, h);
+    if (!data.length) return;
+    const lo = Math.min(...data.map((d) => d.l));
+    const hi = Math.max(...data.map((d) => d.h));
+    const padL = 4, padR = 52, padT = 10, padB = 20;
+    const plotW = w - padL - padR;
+    const cw = plotW / data.length;
+    const y = (p) => padT + (1 - (p - lo) / (hi - lo || 1)) * (h - padT - padB);
+
+    ctx.strokeStyle = 'rgba(255,149,0,0.08)';
+    ctx.fillStyle = '#5c5a54';
+    ctx.font = '10px IBM Plex Mono, monospace';
+    for (let i = 0; i < 5; i++) {
+      const val = lo + (hi - lo) * (i / 4);
+      const gy = y(val);
+      ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(w - padR, gy); ctx.stroke();
+      ctx.fillText(val.toFixed(2), w - padR + 6, gy + 3);
+    }
+
+    data.forEach((d, i) => {
+      const x = padL + i * cw + cw / 2;
+      const up = d.c >= d.o;
+      const color = up ? '#21c675' : '#ff4d4f';
+      ctx.strokeStyle = color; ctx.fillStyle = color;
+      ctx.beginPath(); ctx.moveTo(x, y(d.h)); ctx.lineTo(x, y(d.l)); ctx.stroke();
+      const bodyTop = y(Math.max(d.o, d.c));
+      const bodyH = Math.max(1.2, Math.abs(y(d.o) - y(d.c)));
+      ctx.fillRect(x - cw * 0.32, bodyTop, Math.max(1, cw * 0.64), bodyH);
+    });
+
+    const last = data[data.length - 1];
+    const ly = y(last.c);
+    ctx.strokeStyle = 'rgba(255,149,0,0.4)';
+    ctx.setLineDash([2, 3]);
+    ctx.beginPath(); ctx.moveTo(padL, ly); ctx.lineTo(w - padR, ly); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = last.c >= last.o ? '#21c675' : '#ff4d4f';
+    ctx.fillRect(w - padR, ly - 8, padR, 16);
+    ctx.fillStyle = '#000';
+    ctx.fillText(last.c.toFixed(2), w - padR + 4, ly + 3);
+  }
+
+  function drawLines(canvas, series) {
+    const { ctx, w, h } = fitCanvas(canvas);
+    ctx.clearRect(0, 0, w, h);
+    const all = series.flatMap((s) => s.data);
+    if (!all.length) return;
+    const lo = Math.min(...all), hi = Math.max(...all);
+    const padT = 10, padB = 16, padL = 4, padR = 4;
+    const y = (v) => padT + (1 - (v - lo) / (hi - lo || 1)) * (h - padT - padB);
+    ctx.strokeStyle = 'rgba(255,149,0,0.08)';
+    for (let i = 0; i < 4; i++) {
+      const gy = padT + (i / 3) * (h - padT - padB);
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(w, gy); ctx.stroke();
+    }
+    series.forEach((s) => {
+      const n = s.data.length;
+      if (n < 2) return;
+      const stepX = (w - padL - padR) / (n - 1);
+      ctx.strokeStyle = s.color; ctx.lineWidth = 1.6; ctx.beginPath();
+      s.data.forEach((v, i) => {
+        const x = padL + i * stepX;
+        i === 0 ? ctx.moveTo(x, y(v)) : ctx.lineTo(x, y(v));
+      });
+      ctx.stroke();
+    });
+  }
+
+  function drawDonut(canvas, slices) {
+    const { ctx, w, h } = fitCanvas(canvas);
+    ctx.clearRect(0, 0, w, h);
+    const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 4, ir = r * 0.58;
+    let start = -Math.PI / 2;
+    const colors = ['#ff9500', '#21c675', '#ff4d4f', '#4d9fff', '#c17dff', '#ffd24d', '#5c5a54'];
+    slices.forEach((s, i) => {
+      const angle = (s.weight / 100) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, r, start, start + angle);
+      ctx.closePath();
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.fill();
+      start += angle;
+    });
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.beginPath(); ctx.arc(cx, cy, ir, 0, Math.PI * 2); ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function drawGauge(canvas, value01, label) {
+    const { ctx, w, h } = fitCanvas(canvas);
+    ctx.clearRect(0, 0, w, h);
+    const cx = w / 2, cy = h - 14, r = Math.min(w / 2, h) - 20;
+    ctx.lineWidth = 12;
+    ctx.strokeStyle = '#1a1a1c';
+    ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI, 2 * Math.PI); ctx.stroke();
+    const grad = ctx.createLinearGradient(cx - r, 0, cx + r, 0);
+    grad.addColorStop(0, '#ff4d4f'); grad.addColorStop(0.5, '#ffd24d'); grad.addColorStop(1, '#21c675');
+    ctx.strokeStyle = grad;
+    ctx.beginPath(); ctx.arc(cx, cy, r, Math.PI, Math.PI + value01 * Math.PI); ctx.stroke();
+    const angle = Math.PI + value01 * Math.PI;
+    const nx = cx + Math.cos(angle) * (r - 18), ny = cy + Math.sin(angle) * (r - 18);
+    ctx.strokeStyle = '#eae6df'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(nx, ny); ctx.stroke();
+    ctx.fillStyle = '#eae6df';
+    ctx.font = '600 20px IBM Plex Mono, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, cx, cy - 16);
+    ctx.textAlign = 'left';
+  }
+
+  const GLOBE_CAT_COLORS = {
+    Markets: '#ff9500', Technology: '#4d9fff', Energy: '#ff4d4f', Macro: '#ffd24d',
+    Financials: '#21c675', Crypto: '#c17dff', Materials: '#b56f00', Industrials: '#9a978f',
+    Politics: '#ff9500', Healthcare: '#21c675', General: '#ff9500', Business: '#4d9fff'
+  };
+  const REGION_LATLON = {
+    US: [39, -98], UK: [54, -2], EU: [50, 10], Asia: [30, 105], Japan: [36, 138],
+    'Middle East': [26, 45], India: [21, 78], Global: [10, 20], Europe: [48, 12]
+  };
+  function guessLatLon(region) {
+    return REGION_LATLON[region] || REGION_LATLON.Global;
+  }
+
+  function mountGlobe(canvas, headlines) {
+    let angle = 0, raf;
+    const pts = headlines.map((n) => {
+      const [lat, lon] = n.lat != null ? [n.lat, n.lon] : guessLatLon(n.region);
+      return { lat: (lat * Math.PI) / 180, lon: (lon * Math.PI) / 180, color: GLOBE_CAT_COLORS[n.cat] || '#ff9500' };
+    });
+    function frame() {
+      const { ctx, w, h } = fitCanvas(canvas);
+      ctx.clearRect(0, 0, w, h);
+      const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 10;
+      ctx.strokeStyle = 'rgba(255,149,0,0.18)';
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+      for (let i = -2; i <= 2; i++) {
+        const rr = r * Math.cos((i * Math.PI) / 8);
+        const yy = cy + r * Math.sin((i * Math.PI) / 8);
+        ctx.beginPath(); ctx.ellipse(cx, yy, Math.abs(rr), Math.abs(rr) * 0.28, 0, 0, Math.PI * 2); ctx.stroke();
+      }
+      for (let i = 0; i < 6; i++) {
+        const a = angle + (i * Math.PI) / 6;
+        ctx.beginPath(); ctx.ellipse(cx, cy, r * Math.abs(Math.cos(a)), r, 0, 0, Math.PI * 2); ctx.stroke();
+      }
+      pts.forEach((p) => {
+        const lon = p.lon + angle;
+        const x = Math.cos(p.lat) * Math.sin(lon);
+        const z = Math.cos(p.lat) * Math.cos(lon);
+        const y3 = Math.sin(p.lat);
+        if (z < -0.15) return;
+        const sx = cx + x * r;
+        const sy = cy - y3 * r;
+        const scale = 0.5 + (z + 1) * 0.4;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 2.4 * scale, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = 0.55 + z * 0.45;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      });
+      angle += 0.0022;
+      raf = requestAnimationFrame(frame);
+    }
+    frame();
+    return () => cancelAnimationFrame(raf);
+  }
+
+  // ---------- individual panel renderers ----------
+
+  function renderQuoteMonitor(body, ctx) {
+    const wrap = h(`<div><table class="dtable"><thead><tr><th>Ticker</th><th>Last</th><th>Chg %</th></tr></thead><tbody id="qmBody"></tbody></table></div>`);
+    body.appendChild(wrap);
+    const tbody = wrap.querySelector('#qmBody');
+    const list = M.FUTURES.concat(M.STOCKS.slice(0, 8));
+    let alive = true;
+    async function paint() {
+      const { results, anyLive } = await batchQuotes(list);
+      if (!alive) return;
+      ctx.setBadge(anyLive ? 'live' : 'sim');
+      tbody.innerHTML = list.map((s, i) => `<tr><td>${s.t}</td><td>${results[i].price.toFixed(2)}</td><td>${pctSpan(results[i].chgPct)}</td></tr>`).join('');
+    }
+    paint();
+    const iv = setInterval(paint, 15000);
+    return () => { alive = false; clearInterval(iv); };
+  }
+
+  function renderOverview(body, ctx) {
+    const initial = ctx.config.ticker || 'AAPL';
+    const wrap = h(`
+      <div>
+        <select id="ovSel" style="width:100%;padding:6px;margin-bottom:10px;">${tickerOptions(initial)}</select>
+        <div id="ovPrice" style="font-size:22px;margin-bottom:2px;"></div>
+        <div id="ovChg" style="margin-bottom:12px;font-size:12px;"></div>
+        <canvas id="ovSpark" style="width:100%;height:70px;display:block;margin-bottom:12px;"></canvas>
+        <div id="ovStats" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px;color:var(--text-secondary);margin-bottom:10px;"></div>
+        <p id="ovBlurb" style="font-size:11px;color:var(--text-secondary);line-height:1.5;margin:0;"></p>
+      </div>`);
+    body.appendChild(wrap);
+    const sel = wrap.querySelector('#ovSel');
+    let alive = true;
+    async function paint() {
+      const sym = M.ALL_SYMBOLS.find((s) => s.t === sel.value);
+      const q = await liveQuote(sym);
+      if (!alive) return;
+      ctx.setBadge(q.live ? 'live' : 'sim');
+      wrap.querySelector('#ovPrice').innerHTML = `${q.price.toFixed(2)} <span style="font-size:12px;color:var(--text-dim)">USD</span>`;
+      wrap.querySelector('#ovChg').innerHTML = pctSpan(q.chgPct) + ` <span style="color:var(--text-dim)">today</span>`;
+      const rnd = M.seededRandom(M.hashStr(sym.t + 'stats'));
+      const shares = Math.round(rnd() * 8e9 + 1e8);
+      wrap.querySelector('#ovStats').innerHTML = `
+        <div>Mkt Cap<br><b style="color:var(--text-primary)">${money(q.price * shares)}</b></div>
+        <div>P/E<br><b style="color:var(--text-primary)">${(rnd() * 40 + 8).toFixed(1)}</b></div>
+        <div>52w Range<br><b style="color:var(--text-primary)">${(q.price * 0.7).toFixed(0)}–${(q.price * 1.25).toFixed(0)}</b></div>
+        <div>Avg Vol<br><b style="color:var(--text-primary)">${(rnd() * 40 + 2).toFixed(1)}M</b></div>`;
+      wrap.querySelector('#ovBlurb').textContent = `${sym.name} — ${sym.sector}.`;
+      const series = await getSeries(sym.t, 'D', q.price);
+      if (!alive) return;
+      drawLines(wrap.querySelector('#ovSpark'), [{ data: series.data.map((d) => d.c), color: q.chgPct >= 0 ? '#21c675' : '#ff4d4f' }]);
+    }
+    sel.addEventListener('change', () => { ctx.setConfig({ ticker: sel.value }); paint(); });
+    paint();
+    const iv = setInterval(paint, 20000);
+    return () => { alive = false; clearInterval(iv); };
+  }
+
+  function renderChart(body, ctx) {
+    const initTicker = ctx.config.ticker || 'NVDA';
+    const initTf = ctx.config.tf || 'D';
+    const wrap = h(`
+      <div style="display:flex;flex-direction:column;height:100%;">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-shrink:0;flex-wrap:wrap;">
+          <select id="chSel" style="padding:4px;">${tickerOptions(initTicker)}</select>
+          <div style="display:flex;gap:4px;" id="chTf">
+            ${['1m', '30m', '1h', 'D', 'W'].map((tf) => `<button data-tf="${tf}" class="btn" style="padding:4px 8px;${tf === initTf ? 'border-color:var(--accent);color:var(--accent)' : ''}">${tf}</button>`).join('')}
+          </div>
+        </div>
+        <canvas id="chCanvas" style="flex:1;width:100%;min-height:180px;"></canvas>
+      </div>`);
+    body.classList.add('no-pad');
+    body.style.padding = '10px';
+    body.appendChild(wrap);
+    const sel = wrap.querySelector('#chSel');
+    const canvas = wrap.querySelector('#chCanvas');
+    let tf = initTf;
+    let alive = true;
+    async function paint() {
+      const sym = M.ALL_SYMBOLS.find((s) => s.t === sel.value);
+      const series = await getSeries(sym.t, tf, sym.base);
+      if (!alive) return;
+      ctx.setBadge(series.live ? 'live' : 'sim');
+      drawCandles(canvas, series.data);
+    }
+    sel.addEventListener('change', () => { ctx.setConfig({ ticker: sel.value }); paint(); });
+    wrap.querySelectorAll('[data-tf]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        tf = btn.dataset.tf;
+        ctx.setConfig({ tf });
+        wrap.querySelectorAll('[data-tf]').forEach((b) => { b.style.borderColor = ''; b.style.color = ''; });
+        btn.style.borderColor = 'var(--accent)'; btn.style.color = 'var(--accent)';
+        paint();
+      });
+    });
+    paint();
+    const iv = setInterval(paint, 20000);
+    const ro = new ResizeObserver(paint); ro.observe(canvas);
+    return () => { alive = false; clearInterval(iv); ro.disconnect(); };
+  }
+
+  function renderCompareChart(body, ctx) {
+    const tA = ctx.config.a || 'AAPL', tB = ctx.config.b || 'MSFT';
+    const wrap = h(`
+      <div style="display:flex;flex-direction:column;height:100%;">
+        <div style="display:flex;gap:8px;margin-bottom:8px;flex-shrink:0;">
+          <select id="ccA" style="flex:1;padding:4px;">${tickerOptions(tA)}</select>
+          <select id="ccB" style="flex:1;padding:4px;">${tickerOptions(tB)}</select>
+        </div>
+        <canvas id="ccCanvas" style="flex:1;width:100%;min-height:180px;"></canvas>
+        <div style="display:flex;gap:14px;margin-top:6px;font-size:11px;flex-shrink:0;">
+          <span style="color:#ff9500">■ <span id="ccALabel"></span></span>
+          <span style="color:#4d9fff">■ <span id="ccBLabel"></span></span>
+        </div>
+      </div>`);
+    body.appendChild(wrap);
+    const selA = wrap.querySelector('#ccA'), selB = wrap.querySelector('#ccB');
+    const canvas = wrap.querySelector('#ccCanvas');
+    let alive = true;
+    function normalize(data) {
+      const base = data[0].c;
+      return data.map((d) => ((d.c - base) / base) * 100);
+    }
+    async function paint() {
+      const symA = M.ALL_SYMBOLS.find((s) => s.t === selA.value);
+      const symB = M.ALL_SYMBOLS.find((s) => s.t === selB.value);
+      const [sa, sb] = await Promise.all([getSeries(symA.t, 'D', symA.base), getSeries(symB.t, 'D', symB.base)]);
+      if (!alive) return;
+      ctx.setBadge(sa.live && sb.live ? 'live' : (sa.live || sb.live) ? 'live' : 'sim');
+      const a = normalize(sa.data), b = normalize(sb.data);
+      drawLines(canvas, [{ data: a, color: '#ff9500' }, { data: b, color: '#4d9fff' }]);
+      wrap.querySelector('#ccALabel').textContent = `${symA.t} ${a[a.length - 1] >= 0 ? '+' : ''}${a[a.length - 1].toFixed(2)}%`;
+      wrap.querySelector('#ccBLabel').textContent = `${symB.t} ${b[b.length - 1] >= 0 ? '+' : ''}${b[b.length - 1].toFixed(2)}%`;
+    }
+    selA.addEventListener('change', () => { ctx.setConfig({ a: selA.value }); paint(); });
+    selB.addEventListener('change', () => { ctx.setConfig({ b: selB.value }); paint(); });
+    paint();
+    const ro = new ResizeObserver(paint); ro.observe(canvas);
+    return () => { alive = false; ro.disconnect(); };
+  }
+
+  function heatColor(pct) {
+    const t = Math.max(-1, Math.min(1, pct / 3));
+    if (t >= 0) return `rgba(33, ${Math.round(80 + t * 140)}, 117, ${0.3 + t * 0.55})`;
+    return `rgba(${Math.round(90 + -t * 140)}, 40, 55, ${0.3 + -t * 0.55})`;
+  }
+
+  function renderHeatmap(body, ctx) {
+    const wrap = h(`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:5px;height:100%;align-content:start;" id="hmGrid"></div>`);
+    body.appendChild(wrap);
+    let alive = true;
+    async function paint() {
+      const { results, anyLive } = await batchQuotes(M.ALL_SYMBOLS);
+      if (!alive) return;
+      ctx.setBadge(anyLive ? 'live' : 'sim');
+      wrap.innerHTML = M.ALL_SYMBOLS.map((s, i) => `<div style="background:${heatColor(results[i].chgPct)};border-radius:2px;padding:8px 6px;font-size:10px;">
+          <b style="display:block;font-size:12px;color:var(--text-primary)">${s.t}</b>
+          ${results[i].chgPct >= 0 ? '+' : ''}${results[i].chgPct.toFixed(2)}%
+        </div>`).join('');
+    }
+    paint();
+    const iv = setInterval(paint, 20000);
+    return () => { alive = false; clearInterval(iv); };
+  }
+
+  function renderSectorPerformance(body, ctx) {
+    const wrap = h(`<div id="spList"></div>`);
+    body.appendChild(wrap);
+    let alive = true;
+    async function paint() {
+      const { results, anyLive } = await batchQuotes(M.STOCKS);
+      if (!alive) return;
+      ctx.setBadge(anyLive ? 'live' : 'sim');
+      const bySector = {};
+      M.STOCKS.forEach((s, i) => (bySector[s.sector] = bySector[s.sector] || []).push(results[i].chgPct));
+      const rows = Object.entries(bySector).map(([sec, arr]) => ({ sec, avg: arr.reduce((a, b) => a + b, 0) / arr.length }));
+      rows.sort((a, b) => b.avg - a.avg);
+      const maxAbs = Math.max(...rows.map((r) => Math.abs(r.avg)), 1);
+      wrap.innerHTML = rows.map((r) => `
+        <div class="bar-row">
+          <div class="bar-row__label">${r.sec}</div>
+          <div class="bar-row__track"><div class="bar-row__fill" style="width:${(Math.abs(r.avg) / maxAbs) * 100}%;background:${r.avg >= 0 ? 'var(--green)' : 'var(--red)'};margin-left:${r.avg < 0 ? 'auto' : 0}"></div></div>
+          <div class="bar-row__value">${pctSpan(r.avg)}</div>
+        </div>`).join('');
+    }
+    paint();
+    const iv = setInterval(paint, 20000);
+    return () => { alive = false; clearInterval(iv); };
+  }
+
+  function renderTopMovers(body, ctx) {
+    const wrap = h(`<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;height:100%;">
+      <div><div class="mono-label" style="margin-bottom:6px;color:var(--green)">Gainers</div><div id="tmUp"></div></div>
+      <div><div class="mono-label" style="margin-bottom:6px;color:var(--red)">Losers</div><div id="tmDown"></div></div>
+    </div>`);
+    body.appendChild(wrap);
+    let alive = true;
+    function row(sym, r) { return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--hairline);font-size:11px;"><span>${sym.t}</span>${pctSpan(r.chgPct)}</div>`; }
+    async function paint() {
+      const { results, anyLive } = await batchQuotes(M.ALL_SYMBOLS);
+      if (!alive) return;
+      ctx.setBadge(anyLive ? 'live' : 'sim');
+      const paired = M.ALL_SYMBOLS.map((s, i) => ({ s, r: results[i] })).sort((a, b) => b.r.chgPct - a.r.chgPct);
+      wrap.querySelector('#tmUp').innerHTML = paired.slice(0, 6).map((p) => row(p.s, p.r)).join('');
+      wrap.querySelector('#tmDown').innerHTML = paired.slice(-6).reverse().map((p) => row(p.s, p.r)).join('');
+    }
+    paint();
+    const iv = setInterval(paint, 20000);
+    return () => { alive = false; clearInterval(iv); };
+  }
+
+  const COT_FRAGMENTS = {
+    'ES=F': 'S%26P 500', 'NQ=F': 'NASDAQ', 'CL=F': 'CRUDE OIL', 'GC=F': 'GOLD',
+    'SI=F': 'SILVER', 'ZC=F': 'CORN', 'ZN=F': 'TREASURY NOTES', 'NG=F': 'NATURAL GAS', '6E=F': 'EURO FX'
+  };
+  function renderCOT(body, ctx) {
+    const wrap = h(`<div id="cotList"></div>`);
+    body.appendChild(wrap);
+    let alive = true;
+    async function paint() {
+      let anyLive = false;
+      const rowsHtml = [];
+      for (const f of M.FUTURES) {
+        let comm, nonComm;
+        try {
+          const real = await LD.getCOT(COT_FRAGMENTS[f.t] || f.name);
+          comm = real.commercialNet; nonComm = real.nonCommercialNet;
+          anyLive = true;
+        } catch (e) {
+          const rnd = M.seededRandom(M.hashStr(f.t + 'cot'));
+          comm = Math.round((rnd() - 0.5) * 200000);
+          nonComm = Math.round((rnd() - 0.4) * 180000);
+        }
+        const total = Math.abs(comm) + Math.abs(nonComm) || 1;
+        rowsHtml.push(`
+          <div style="margin-bottom:12px;">
+            <div style="font-size:11px;margin-bottom:4px;"><b>${f.t} — ${f.name}</b></div>
+            <div style="display:flex;height:8px;border-radius:3px;overflow:hidden;">
+              <div style="width:${(Math.abs(comm) / total) * 100}%;background:var(--accent);"></div>
+              <div style="width:${(Math.abs(nonComm) / total) * 100}%;background:#4d9fff;"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-dim);margin-top:3px;">
+              <span>Commercial ${comm >= 0 ? '+' : ''}${comm.toLocaleString()}</span>
+              <span>Non-Comm ${nonComm >= 0 ? '+' : ''}${nonComm.toLocaleString()}</span>
+            </div>
+          </div>`);
+      }
+      if (!alive) return;
+      ctx.setBadge(anyLive ? 'live' : 'sim');
+      wrap.innerHTML = rowsHtml.join('');
+    }
+    paint();
+    const iv = setInterval(paint, 12 * 3600000);
+    return () => { alive = false; clearInterval(iv); };
+  }
+
+  function renderSocialVolume(body, ctx) {
+    const wrap = h(`<table class="dtable"><thead><tr><th>#</th><th>Ticker</th><th>Name</th><th>Mentions</th><th>Chg</th></tr></thead><tbody></tbody></table>`);
+    body.appendChild(wrap);
+    const tbody = wrap.querySelector('tbody');
+    let alive = true;
+    async function paint() {
+      let rows, live = true;
+      try {
+        rows = await LD.getSocialVolume();
+        if (!rows.length) throw new Error('empty');
+      } catch (e) {
+        rows = M.SOCIAL_VOLUME.map((r) => ({ t: r.t, name: (M.ALL_SYMBOLS.find((s) => s.t === r.t) || {}).name || '', mentions: r.mentions, chg: r.chg * 100 }));
+        live = false;
+      }
+      if (!alive) return;
+      ctx.setBadge(live ? 'live' : 'sim');
+      tbody.innerHTML = rows.map((row, i) => `<tr><td>${i + 1}</td><td><b>${row.t}</b></td><td style="color:var(--text-dim)">${row.name || ''}</td><td>${row.mentions}</td><td>${pctSpan(row.chg)}</td></tr>`).join('');
+    }
+    paint();
+    const iv = setInterval(paint, 5 * 60000);
+    return () => { alive = false; clearInterval(iv); };
+  }
+
+  function renderPredictionMarkets(body) {
+    const wrap = h(`<div></div>`);
+    body.appendChild(wrap);
+    wrap.innerHTML = M.PREDICTION_MARKETS.map((p) => `
+      <div style="margin-bottom:14px;">
+        <div style="font-size:12px;margin-bottom:5px;">${p.q}</div>
+        <div class="bar-row" style="margin-bottom:2px;">
+          <div class="bar-row__track"><div class="bar-row__fill" style="width:${p.odds * 100}%;background:var(--accent);"></div></div>
+          <div class="bar-row__value">${Math.round(p.odds * 100)}%</div>
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);">Vol ${p.vol}</div>
+      </div>`).join('');
+  }
+
+  function renderSeasonality(body, ctx) {
+    const initial = ctx.config.ticker || 'SPY';
+    const wrap = h(`<div><select id="seSel" style="width:100%;padding:6px;margin-bottom:10px;">${tickerOptions(initial)}</select><canvas id="seCanvas" style="width:100%;height:170px;"></canvas></div>`);
+    body.appendChild(wrap);
+    const sel = wrap.querySelector('#seSel');
+    const canvas = wrap.querySelector('#seCanvas');
+    const months = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+    let alive = true;
+    async function paint() {
+      const symTicker = sel.value;
+      let vals, live = true;
+      try {
+        const hist = await LD.getHistory(symTicker, '10y', '1mo');
+        if (hist.length < 24) throw new Error('too little history');
+        const byMonth = Array.from({ length: 12 }, () => []);
+        for (let i = 1; i < hist.length; i++) {
+          const ret = ((hist[i].c - hist[i - 1].c) / hist[i - 1].c) * 100;
+          byMonth[new Date(hist[i].t).getMonth()].push(ret);
+        }
+        vals = byMonth.map((arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0));
+      } catch (e) {
+        const rnd = M.seededRandom(M.hashStr(symTicker + 'season'));
+        vals = months.map(() => (rnd() - 0.42) * 6);
+        live = false;
+      }
+      if (!alive) return;
+      ctx.setBadge(live ? 'live' : 'sim');
+      const { ctx: c2, w, h: hh } = fitCanvas(canvas);
+      c2.clearRect(0, 0, w, hh);
+      const max = Math.max(...vals.map(Math.abs), 1);
+      const bw = w / vals.length;
+      const zero = hh / 2;
+      vals.forEach((v, i) => {
+        const bh = (Math.abs(v) / max) * (hh / 2 - 16);
+        c2.fillStyle = v >= 0 ? '#21c675' : '#ff4d4f';
+        c2.fillRect(i * bw + bw * 0.2, v >= 0 ? zero - bh : zero, bw * 0.6, bh);
+        c2.fillStyle = '#5c5a54';
+        c2.font = '10px IBM Plex Mono, monospace';
+        c2.fillText(months[i], i * bw + bw * 0.4, hh - 4);
+      });
+      c2.strokeStyle = 'rgba(255,149,0,0.2)';
+      c2.beginPath(); c2.moveTo(0, zero); c2.lineTo(w, zero); c2.stroke();
+    }
+    sel.addEventListener('change', () => { ctx.setConfig({ ticker: sel.value }); paint(); });
+    paint();
+    const ro = new ResizeObserver(paint); ro.observe(canvas);
+    return () => { alive = false; ro.disconnect(); };
+  }
+
+  function renderCustomIndex(body, ctx) {
+    const wrap = h(`
+      <div style="display:flex;flex-direction:column;height:100%;">
+        <div id="ciRows" style="margin-bottom:8px;flex-shrink:0;"></div>
+        <button class="btn" id="ciAdd" style="align-self:flex-start;margin-bottom:8px;padding:4px 10px;font-size:11px;">+ Add ticker</button>
+        <canvas id="ciCanvas" style="flex:1;width:100%;min-height:120px;"></canvas>
+      </div>`);
+    body.appendChild(wrap);
+    const rowsEl = wrap.querySelector('#ciRows');
+    const canvas = wrap.querySelector('#ciCanvas');
+    let rows = ctx.config.rows || [{ t: 'AAPL', w: 40 }, { t: 'MSFT', w: 35 }, { t: 'NVDA', w: 25 }];
+    let alive = true;
+    function paintRows() {
+      rowsEl.innerHTML = '';
+      rows.forEach((r) => {
+        const rowEl = h(`<div style="display:flex;gap:6px;margin-bottom:5px;">
+          <select style="flex:1;padding:3px;font-size:11px;">${tickerOptions(r.t)}</select>
+          <input type="number" value="${r.w}" style="width:56px;padding:3px;font-size:11px;" min="0" max="100">
+        </div>`);
+        rowEl.querySelector('select').addEventListener('change', (e) => { r.t = e.target.value; ctx.setConfig({ rows }); paintChart(); });
+        rowEl.querySelector('input').addEventListener('input', (e) => { r.w = +e.target.value; ctx.setConfig({ rows }); paintChart(); });
+        rowsEl.appendChild(rowEl);
+      });
+    }
+    async function paintChart() {
+      const totalW = rows.reduce((a, r) => a + r.w, 0) || 1;
+      const series = await Promise.all(rows.map(async (r) => {
+        const sym = M.ALL_SYMBOLS.find((s) => s.t === r.t);
+        const s = await getSeries(sym.t, 'D', sym.base);
+        return s.data.map((d) => d.c);
+      }));
+      if (!alive) return;
+      const n = Math.min(...series.map((s) => s.length));
+      const combined = [];
+      for (let i = 0; i < n; i++) {
+        let val = 0;
+        rows.forEach((r, idx) => { val += (series[idx][i] / series[idx][0]) * (r.w / totalW); });
+        combined.push((val - 1) * 100);
+      }
+      drawLines(canvas, [{ data: combined, color: '#ff9500' }]);
+    }
+    wrap.querySelector('#ciAdd').addEventListener('click', () => {
+      if (rows.length >= 6) return;
+      rows.push({ t: 'GOOGL', w: 10 });
+      ctx.setConfig({ rows });
+      paintRows(); paintChart();
+    });
+    paintRows(); paintChart();
+    const ro = new ResizeObserver(paintChart); ro.observe(canvas);
+    return () => { alive = false; ro.disconnect(); };
+  }
+
+  function renderLiveNews(body, ctx) {
+    const wrap = h(`<div id="lnList" style="display:flex;flex-direction:column;gap:10px;"></div>`);
+    body.appendChild(wrap);
+    let alive = true;
+    async function paint() {
+      let items, live = true;
+      try {
+        items = await LD.getNews();
+        if (!items.length) throw new Error('empty');
+      } catch (e) {
+        items = M.NEWS_HEADLINES;
+        live = false;
+      }
+      if (!alive) return;
+      ctx.setBadge(live ? 'live' : 'sim');
+      wrap.innerHTML = items.slice(0, 14).map((n) => `
+        <div style="border-left:2px solid var(--accent-dim);padding-left:8px;">
+          <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;">${n.cat} · ${n.region}</div>
+          <div style="font-size:12px;">${n.url ? `<a href="${n.url}" target="_blank" rel="noopener" style="color:inherit;">${n.text}</a>` : n.text}</div>
+        </div>`).join('');
+    }
+    paint();
+    const iv = setInterval(paint, 2 * 60000);
+    return () => { alive = false; clearInterval(iv); };
+  }
+
+  function renderNewsGlobe(body, ctx) {
+    const wrap = h(`
+      <div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:10px;height:100%;">
+        <canvas id="ngCanvas" style="width:100%;height:100%;"></canvas>
+        <div style="overflow:auto;">
+          <div class="mono-label" style="margin-bottom:8px;" id="ngCount"></div>
+          <div style="display:flex;flex-direction:column;gap:9px;" id="ngList"></div>
+        </div>
+      </div>`);
+    body.appendChild(wrap);
+    const canvas = wrap.querySelector('#ngCanvas');
+    let destroyGlobe = null;
+    let alive = true;
+    async function paint() {
+      let items, live = true;
+      try {
+        items = await LD.getNews();
+        if (!items.length) throw new Error('empty');
+      } catch (e) {
+        items = M.NEWS_HEADLINES;
+        live = false;
+      }
+      if (!alive) return;
+      ctx.setBadge(live ? 'live' : 'sim');
+      wrap.querySelector('#ngCount').textContent = `${items.length} stories on the globe`;
+      wrap.querySelector('#ngList').innerHTML = items.map((n) => `<div style="border-left:2px solid ${GLOBE_CAT_COLORS[n.cat] || 'var(--accent)'};padding-left:8px;">
+          <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;">${n.cat} · ${n.region}</div>
+          <div style="font-size:11px;">${n.text}</div>
+        </div>`).join('');
+      if (destroyGlobe) destroyGlobe();
+      destroyGlobe = mountGlobe(canvas, items);
+    }
+    paint();
+    const iv = setInterval(paint, 2 * 60000);
+    return () => { alive = false; clearInterval(iv); if (destroyGlobe) destroyGlobe(); };
+  }
+
+  function impactDot(impact) {
+    const color = impact === 'high' ? 'var(--red)' : impact === 'medium' ? 'var(--accent)' : 'var(--text-dim)';
+    return `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};margin-right:5px;"></span>`;
+  }
+
+  function renderEconCalendar(body, ctx) {
+    const wrap = h(`<table class="dtable"><thead><tr><th>Time</th><th>Event</th><th>Actual</th><th>Fcst</th><th>Prev</th></tr></thead><tbody></tbody></table>`);
+    body.appendChild(wrap);
+    let alive = true;
+    async function paint() {
+      let rows, live = true;
+      try {
+        rows = await LD.getEconCalendar();
+        if (!rows.length) throw new Error('empty');
+      } catch (e) {
+        rows = M.ECON_EVENTS; live = false;
+      }
+      if (!alive) return;
+      ctx.setBadge(live ? 'live' : 'sim');
+      wrap.querySelector('tbody').innerHTML = rows.map((e) => `
+        <tr><td>${e.time}</td><td>${impactDot(e.impact)}${e.name}</td><td>${e.actual}</td><td>${e.forecast}</td><td>${e.prev}</td></tr>`).join('');
+    }
+    paint();
+    const iv = setInterval(paint, 3600000);
+    return () => { alive = false; clearInterval(iv); };
+  }
+
+  function render13F(body) {
+    const wrap = h(`
+      <div style="display:flex;flex-direction:column;height:100%;">
+        <input id="whSearch" placeholder="Search fund by name or CIK" style="width:100%;padding:6px;margin-bottom:8px;flex-shrink:0;">
+        <div id="whTags" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;flex-shrink:0;max-height:90px;overflow:auto;"></div>
+        <div id="whDetail" style="flex:1;overflow:auto;"></div>
+      </div>`);
+    body.appendChild(wrap);
+    const tagsEl = wrap.querySelector('#whTags');
+    const detailEl = wrap.querySelector('#whDetail');
+    const searchEl = wrap.querySelector('#whSearch');
+
+    function paintTags(filter) {
+      const funds = M.FUNDS_13F.filter((f) => !filter || f.toLowerCase().includes(filter.toLowerCase()));
+      tagsEl.innerHTML = funds.map((f) => `<button class="pill" data-fund="${f}" style="cursor:pointer;background:none;">${f.toUpperCase()}</button>`).join('');
+      tagsEl.querySelectorAll('[data-fund]').forEach((btn) => btn.addEventListener('click', () => selectFund(btn.dataset.fund)));
+    }
+    function selectFund(name) {
+      const data = M.fundHoldings(name);
+      detailEl.innerHTML = `
+        <div style="font-weight:600;color:var(--accent);margin-bottom:2px;">${name} <span class="pill" style="border-color:var(--text-dim);color:var(--text-dim);margin-left:4px;">SIM</span></div>
+        <div style="font-size:10px;color:var(--text-dim);margin-bottom:10px;">Period ${data.period} · Filed ${data.filed} · ${data.positions} positions · $${data.aum}B AUM</div>
+        <div style="display:flex;gap:14px;align-items:center;">
+          <canvas id="whDonut" width="120" height="120" style="width:120px;height:120px;flex-shrink:0;"></canvas>
+          <div style="flex:1;font-size:11px;">
+            ${data.picks.map((p) => `<div style="display:flex;justify-content:space-between;padding:2px 0;">
+              <span>${p.t} ${p.action ? `<span class="pill" style="color:var(--red);border-color:var(--red-dim);margin-left:4px;">${p.action}</span>` : ''}</span>
+              <span>${p.weight}%</span>
+            </div>`).join('')}
+          </div>
+        </div>`;
+      drawDonut(detailEl.querySelector('#whDonut'), data.picks);
+    }
+    searchEl.addEventListener('input', (e) => paintTags(e.target.value));
+    paintTags('');
+    selectFund('Berkshire Hathaway');
+  }
+
+  function renderRiskCalc(body) {
+    const wrap = h(`
+      <div style="display:flex;flex-direction:column;gap:8px;font-size:11px;">
+        <label>Account Size<input id="rcAcct" type="number" value="10000" style="width:100%;padding:5px;margin-top:3px;"></label>
+        <label>Risk %<input id="rcRisk" type="number" value="1" style="width:100%;padding:5px;margin-top:3px;"></label>
+        <label>Entry<input id="rcEntry" type="number" value="100" style="width:100%;padding:5px;margin-top:3px;"></label>
+        <label>Stop<input id="rcStop" type="number" value="97" style="width:100%;padding:5px;margin-top:3px;"></label>
+        <div style="margin-top:8px;border-top:1px solid var(--hairline);padding-top:10px;">
+          <div>$ at Risk: <b id="rcDollar" style="color:var(--accent)"></b></div>
+          <div>Position Size: <b id="rcShares" style="color:var(--accent)"></b> shares/contracts</div>
+        </div>
+      </div>`);
+    body.appendChild(wrap);
+    function paint() {
+      const acct = +wrap.querySelector('#rcAcct').value || 0;
+      const risk = (+wrap.querySelector('#rcRisk').value || 0) / 100;
+      const entry = +wrap.querySelector('#rcEntry').value || 0;
+      const stop = +wrap.querySelector('#rcStop').value || 0;
+      const dollarRisk = acct * risk;
+      const perShare = Math.abs(entry - stop) || 1;
+      wrap.querySelector('#rcDollar').textContent = '$' + dollarRisk.toFixed(2);
+      wrap.querySelector('#rcShares').textContent = Math.floor(dollarRisk / perShare).toLocaleString();
+    }
+    wrap.querySelectorAll('input').forEach((inp) => inp.addEventListener('input', paint));
+    paint();
+  }
+
+  function renderMarketMood(body, ctx) {
+    const wrap = h(`<div style="text-align:center;"><canvas id="mmGauge" style="width:100%;height:120px;"></canvas><div class="mono-label" style="margin-top:6px;">Market Breadth</div></div>`);
+    body.appendChild(wrap);
+    const canvas = wrap.querySelector('#mmGauge');
+    let alive = true;
+    async function paint() {
+      const { results, anyLive } = await batchQuotes(M.ALL_SYMBOLS);
+      if (!alive) return;
+      ctx.setBadge(anyLive ? 'live' : 'sim');
+      const up = results.filter((r) => r.chgPct >= 0).length;
+      const value = up / results.length;
+      const label = value < 0.35 ? 'Risk-Off' : value < 0.65 ? 'Neutral' : 'Risk-On';
+      drawGauge(canvas, value, label);
+    }
+    paint();
+    const iv = setInterval(paint, 20000);
+    const ro = new ResizeObserver(paint); ro.observe(canvas);
+    return () => { alive = false; clearInterval(iv); ro.disconnect(); };
+  }
+
+  function renderNotes(body, ctx) {
+    const wrap = h(`<textarea id="ntArea" placeholder="Scratchpad… saved locally" style="width:100%;height:100%;resize:none;padding:8px;font-size:12px;line-height:1.5;"></textarea>`);
+    body.appendChild(wrap);
+    const ta = wrap.querySelector('#ntArea');
+    const key = 'vt-notes-' + ctx.uid;
+    ta.value = localStorage.getItem(key) || '';
+    ta.addEventListener('input', () => localStorage.setItem(key, ta.value));
+  }
+
+  const PANEL_DEFS = [
+    { id: 'quote-monitor', code: 'QM', category: 'Markets', title: 'Quote Monitor', desc: 'Live watchlist', size: 'md', render: renderQuoteMonitor },
+    { id: 'overview', code: 'OV', category: 'Markets', title: 'Overview', desc: 'Company at a glance', size: 'md', render: renderOverview },
+    { id: 'chart', code: 'CH', category: 'Markets', title: 'Chart', desc: 'Price chart', size: 'lg', render: renderChart },
+    { id: 'compare-chart', code: 'CC', category: 'Markets', title: 'Compare Chart', desc: 'Two-ticker overlay', size: 'lg', render: renderCompareChart },
+    { id: 'heatmap', code: 'HM', category: 'Markets', title: 'Heatmap', desc: 'Market map', size: 'lg', render: renderHeatmap },
+    { id: 'sector-performance', code: 'SP', category: 'Markets', title: 'Sector Performance', desc: 'Sector moves', size: 'md', render: renderSectorPerformance },
+    { id: 'top-movers', code: 'TM', category: 'Markets', title: 'Top Movers', desc: 'Gainers, losers', size: 'md', render: renderTopMovers },
+    { id: 'cot-positioning', code: 'CT', category: 'Markets', title: 'COT Positioning', desc: 'Futures CoT', size: 'md', render: renderCOT },
+    { id: 'social-volume', code: 'SV', category: 'Markets', title: 'Social Volume', desc: 'Reddit mentions', size: 'md', render: renderSocialVolume },
+    { id: 'prediction-markets', code: 'PM', category: 'Markets', title: 'Prediction Markets', desc: 'Polymarket / Kalshi odds', size: 'md', render: renderPredictionMarkets },
+    { id: 'seasonality', code: 'SE', category: 'Markets', title: 'Seasonality', desc: 'Monthly return pattern', size: 'md', render: renderSeasonality },
+    { id: 'custom-index', code: 'CI', category: 'Markets', title: 'Custom Index', desc: 'Weighted basket', size: 'md', render: renderCustomIndex },
+    { id: 'live-news', code: 'LN', category: 'News', title: 'Live News', desc: 'Wire headlines', size: 'md', render: renderLiveNews },
+    { id: 'news-globe', code: 'NG', category: 'News', title: 'News Globe', desc: 'Stories by location', size: 'xl', render: renderNewsGlobe },
+    { id: 'economic-calendar', code: 'EC', category: 'News', title: 'Economic Calendar', desc: 'Macro data drops', size: 'md', render: renderEconCalendar },
+    { id: 'whales-13f', code: 'WH', category: 'Community', title: '13F Whales', desc: 'Institutional filings', size: 'lg', render: render13F },
+    { id: 'risk-calculator', code: 'RC', category: 'Community', title: 'Risk Calculator', desc: 'Position sizing', size: 'sm', render: renderRiskCalc },
+    { id: 'market-mood', code: 'MM', category: 'Community', title: 'Market Mood', desc: 'Sentiment gauge', size: 'sm', render: renderMarketMood },
+    { id: 'notes', code: 'NO', category: 'Community', title: 'Notes', desc: 'Scratchpad', size: 'sm', render: renderNotes }
+  ];
+
+  global.PanelRegistry = { PANEL_DEFS };
+})(window);
