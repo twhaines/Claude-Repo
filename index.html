@@ -25,7 +25,7 @@
       <span><b>NY</b><span id="clockNY">--:--</span></span>
       <span><b>TYO</b><span id="clockTYO">--:--</span></span>
     </div>
-    <span class="topbar__icon" id="resetLayoutBtn" title="Reset to default layout">⟲</span>
+    <span class="topbar__icon" id="openLayoutsBtn" title="Layouts">▦</span>
     <span class="topbar__icon" id="openSettingsBtn" title="Settings / API keys">⚙</span>
   </div>
 
@@ -70,6 +70,16 @@
       </div>
       <button class="btn btn--primary" id="settingsSave" style="align-self:flex-start;padding:8px 16px;">Save</button>
     </div>
+  </div>
+</div>
+
+<div class="palette-overlay hidden" id="layoutsOverlay">
+  <div class="palette" style="width:min(720px,92vw);">
+    <div class="palette__head">
+      <div><b>LAYOUTS</b><span>pick a preset or save your own</span></div>
+      <div class="palette__close" id="layoutsClose">ESC to close</div>
+    </div>
+    <div class="palette__results" id="layoutsResults" style="padding:16px;"></div>
   </div>
 </div>
 

@@ -11,19 +11,62 @@
   const paletteResults = document.getElementById('paletteResults');
 
   const LAYOUT_KEY = 'vt-layout';
+  const CUSTOM_LAYOUTS_KEY = 'vt-custom-layouts';
 
-  // A futures-trader's pre-market routine: macro calendar and news first,
-  // then the instruments themselves, then positioning context.
-  const DEFAULT_LAYOUT = [
-    { defId: 'economic-calendar' },
-    { defId: 'live-news' },
-    { defId: 'news-globe' },
-    { defId: 'chart', config: { ticker: 'ES=F', tf: '1h' } },
-    { defId: 'quote-monitor' },
-    { defId: 'cot-positioning' },
-    { defId: 'heatmap' },
-    { defId: 'market-mood' },
-    { defId: 'social-volume' }
+  // Built-in starting points, sized so nothing needs manual resizing.
+  const PRESETS = [
+    {
+      id: 'premarket',
+      name: 'Pre-Market Briefing',
+      desc: 'Macro calendar and news first, then the instruments',
+      panels: [
+        { defId: 'economic-calendar' },
+        { defId: 'live-news' },
+        { defId: 'news-globe' },
+        { defId: 'chart', config: { ticker: 'ES=F', tf: '1h' } },
+        { defId: 'quote-monitor' },
+        { defId: 'cot-positioning' },
+        { defId: 'heatmap' },
+        { defId: 'market-mood' },
+        { defId: 'social-volume' }
+      ]
+    },
+    {
+      id: 'chart-focus',
+      name: 'Chart Focus',
+      desc: 'One large chart to work with, watchlist alongside',
+      panels: [
+        { defId: 'chart', config: { ticker: 'ES=F', tf: '1h' }, sizeOverride: { cols: 9, rows: 30 } },
+        { defId: 'quote-monitor', sizeOverride: { cols: 3, rows: 15 } },
+        { defId: 'market-mood', sizeOverride: { cols: 3, rows: 15 } },
+        { defId: 'live-news', sizeOverride: { cols: 12, rows: 12 } }
+      ]
+    },
+    {
+      id: 'macro-news',
+      name: 'Macro & News',
+      desc: 'Calendar, headlines, and the news globe front and center',
+      panels: [
+        { defId: 'economic-calendar', sizeOverride: { cols: 6, rows: 16 } },
+        { defId: 'live-news', sizeOverride: { cols: 6, rows: 16 } },
+        { defId: 'news-globe', sizeOverride: { cols: 12, rows: 20 } },
+        { defId: 'prediction-markets', sizeOverride: { cols: 6, rows: 12 } },
+        { defId: 'cot-positioning', sizeOverride: { cols: 6, rows: 12 } }
+      ]
+    },
+    {
+      id: 'overview-grid',
+      name: 'Overview Grid',
+      desc: 'Compact tiles for a fast market scan',
+      panels: [
+        { defId: 'heatmap', sizeOverride: { cols: 8, rows: 16 } },
+        { defId: 'market-mood', sizeOverride: { cols: 4, rows: 16 } },
+        { defId: 'top-movers' },
+        { defId: 'sector-performance' },
+        { defId: 'quote-monitor' },
+        { defId: 'social-volume' }
+      ]
+    }
   ];
 
   let panels = []; // { uid, defId, destroy, config, sizeOverride }
@@ -57,7 +100,6 @@
     const uid = 'p' + uidSeq++;
     const panelEl = document.createElement('div');
     panelEl.className = `panel size-${savedSize || def.size}`;
-    panelEl.draggable = true;
     panelEl.dataset.uid = uid;
     panelEl.innerHTML = `
       <div class="panel__head">
@@ -152,14 +194,19 @@
   }
 
   // ---------- drag to reorder ----------
+  // Only the header is a native drag handle, not the whole card — otherwise
+  // dragging inside a panel's body (e.g. panning the chart) fights with
+  // picking the whole panel up to reorder it.
   let dragSrc = null;
   function attachDrag(panelEl) {
-    panelEl.addEventListener('dragstart', (e) => {
+    const head = panelEl.querySelector('.panel__head');
+    head.draggable = true;
+    head.addEventListener('dragstart', (e) => {
       dragSrc = panelEl;
       panelEl.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'move';
     });
-    panelEl.addEventListener('dragend', () => {
+    head.addEventListener('dragend', () => {
       panelEl.classList.remove('dragging');
       board.querySelectorAll('.panel').forEach((p) => p.classList.remove('drag-over'));
       saveLayout();
@@ -254,12 +301,13 @@
   document.addEventListener('keydown', (e) => {
     const tag = (e.target.tagName || '').toLowerCase();
     const typing = tag === 'input' || tag === 'textarea' || e.target.isContentEditable;
-    if (e.key === '/' && !typing && paletteOverlay.classList.contains('hidden') && settingsOverlay.classList.contains('hidden')) {
+    if (e.key === '/' && !typing && paletteOverlay.classList.contains('hidden') && settingsOverlay.classList.contains('hidden') && layoutsOverlay.classList.contains('hidden')) {
       e.preventDefault();
       openPalette();
     } else if (e.key === 'Escape') {
       if (!paletteOverlay.classList.contains('hidden')) closePalette();
       if (!settingsOverlay.classList.contains('hidden')) closeSettings();
+      if (!layoutsOverlay.classList.contains('hidden')) closeLayouts();
     }
   });
 
@@ -279,15 +327,115 @@
     closeSettings();
   });
 
-  // ---------- reset layout ----------
-  document.getElementById('resetLayoutBtn').addEventListener('click', () => {
-    if (!confirm('Reset to the default futures pre-market layout? This clears your current panels.')) return;
+  // ---------- layouts (presets + user-saved) ----------
+  const layoutsOverlay = document.getElementById('layoutsOverlay');
+  const layoutsResults = document.getElementById('layoutsResults');
+
+  function loadCustomLayouts() {
+    try {
+      const raw = localStorage.getItem(CUSTOM_LAYOUTS_KEY);
+      const data = raw ? JSON.parse(raw) : [];
+      return Array.isArray(data) ? data : [];
+    } catch (e) { return []; }
+  }
+  function saveCustomLayouts(list) {
+    try { localStorage.setItem(CUSTOM_LAYOUTS_KEY, JSON.stringify(list)); } catch (e) { /* storage unavailable */ }
+  }
+
+  function applyLayoutPanels(panelList) {
+    if (panels.length && !confirm('Replace your current panels with this layout?')) return;
     panels.forEach((p) => { if (p.destroy) p.destroy(); });
     panels = [];
     board.innerHTML = '';
-    localStorage.removeItem(LAYOUT_KEY);
-    DEFAULT_LAYOUT.forEach((p) => addPanel(p.defId, p.config));
-  });
+    panelList.forEach((p) => addPanel(p.defId, p.config, p.sizeOverride));
+    closeLayouts();
+  }
+
+  function layoutCard(name, desc, onApply, onDelete) {
+    const card = document.createElement('div');
+    card.className = 'palette__item';
+    card.style.position = 'relative';
+    card.innerHTML = `<b>${name}</b><p>${desc}</p>`;
+    card.addEventListener('click', onApply);
+    if (onDelete) {
+      const del = document.createElement('span');
+      del.textContent = '✕';
+      del.title = 'Delete this saved layout';
+      del.style.cssText = 'position:absolute;top:8px;right:10px;color:var(--text-dim);font-size:11px;';
+      del.addEventListener('mouseenter', () => { del.style.color = 'var(--red)'; });
+      del.addEventListener('mouseleave', () => { del.style.color = 'var(--text-dim)'; });
+      del.addEventListener('click', (e) => { e.stopPropagation(); onDelete(); });
+      card.appendChild(del);
+    }
+    return card;
+  }
+
+  function renderLayouts() {
+    layoutsResults.innerHTML = '';
+
+    const builtInHeader = document.createElement('div');
+    builtInHeader.className = 'palette__category';
+    builtInHeader.textContent = 'Built-in';
+    layoutsResults.appendChild(builtInHeader);
+
+    const builtInGrid = document.createElement('div');
+    builtInGrid.className = 'palette__grid';
+    PRESETS.forEach((preset) => {
+      builtInGrid.appendChild(layoutCard(preset.name, preset.desc, () => applyLayoutPanels(preset.panels)));
+    });
+    layoutsResults.appendChild(builtInGrid);
+
+    const saveHeader = document.createElement('div');
+    saveHeader.className = 'palette__category';
+    saveHeader.textContent = 'Yours';
+    layoutsResults.appendChild(saveHeader);
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn';
+    saveBtn.style.cssText = 'margin-bottom:10px;padding:6px 12px;font-size:11px;';
+    saveBtn.textContent = '+ Save current arrangement as…';
+    saveBtn.addEventListener('click', () => {
+      const name = prompt('Name this layout:');
+      if (!name || !name.trim()) return;
+      const list = loadCustomLayouts();
+      list.push({
+        id: 'custom_' + Date.now(),
+        name: name.trim(),
+        panels: Array.from(board.children).map((el) => {
+          const p = panels.find((x) => x.uid === el.dataset.uid);
+          return p ? { defId: p.defId, config: p.config || {}, sizeOverride: p.sizeOverride || null } : null;
+        }).filter(Boolean)
+      });
+      saveCustomLayouts(list);
+      renderLayouts();
+    });
+    layoutsResults.appendChild(saveBtn);
+
+    const custom = loadCustomLayouts();
+    if (!custom.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'color:var(--text-dim);font-size:12px;';
+      empty.textContent = 'No saved layouts yet — arrange your panels, then save them here.';
+      layoutsResults.appendChild(empty);
+      return;
+    }
+    const customGrid = document.createElement('div');
+    customGrid.className = 'palette__grid';
+    custom.forEach((layout) => {
+      customGrid.appendChild(layoutCard(layout.name, `${layout.panels.length} panels`, () => applyLayoutPanels(layout.panels), () => {
+        if (!confirm(`Delete "${layout.name}"?`)) return;
+        saveCustomLayouts(loadCustomLayouts().filter((l) => l.id !== layout.id));
+        renderLayouts();
+      }));
+    });
+    layoutsResults.appendChild(customGrid);
+  }
+
+  function openLayouts() { renderLayouts(); layoutsOverlay.classList.remove('hidden'); }
+  function closeLayouts() { layoutsOverlay.classList.add('hidden'); }
+  document.getElementById('openLayoutsBtn').addEventListener('click', openLayouts);
+  document.getElementById('layoutsClose').addEventListener('click', closeLayouts);
+  layoutsOverlay.addEventListener('click', (e) => { if (e.target === layoutsOverlay) closeLayouts(); });
 
   // ---------- tabs ----------
   function renderTabs() {
@@ -343,5 +491,5 @@
 
   // ---------- boot ----------
   const saved = loadLayout();
-  (saved || DEFAULT_LAYOUT).forEach((p) => addPanel(p.defId, p.config, p.sizeOverride));
+  (saved || PRESETS[0].panels).forEach((p) => addPanel(p.defId, p.config, p.sizeOverride));
 })();
