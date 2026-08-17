@@ -77,51 +77,6 @@
   }
 
   // ---------- canvas drawing primitives ----------
-  function drawCandles(canvas, data) {
-    const fit = fitCanvas(canvas);
-    const ctx = fit.ctx, w = fit.w, h = fit.h;
-    ctx.clearRect(0, 0, w, h);
-    if (!data.length) return;
-    const lo = Math.min(...data.map((d) => d.l));
-    const hi = Math.max(...data.map((d) => d.h));
-    const padL = 4, padR = 52, padT = 10, padB = 20;
-    const plotW = w - padL - padR;
-    const cw = plotW / data.length;
-    const y = (p) => padT + (1 - (p - lo) / (hi - lo || 1)) * (h - padT - padB);
-
-    ctx.strokeStyle = 'rgba(255,149,0,0.08)';
-    ctx.fillStyle = '#5c5a54';
-    ctx.font = '10px IBM Plex Mono, monospace';
-    for (let i = 0; i < 5; i++) {
-      const val = lo + (hi - lo) * (i / 4);
-      const gy = y(val);
-      ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(w - padR, gy); ctx.stroke();
-      ctx.fillText(val.toFixed(2), w - padR + 6, gy + 3);
-    }
-
-    data.forEach((d, i) => {
-      const x = padL + i * cw + cw / 2;
-      const up = d.c >= d.o;
-      const color = up ? '#21c675' : '#ff4d4f';
-      ctx.strokeStyle = color; ctx.fillStyle = color;
-      ctx.beginPath(); ctx.moveTo(x, y(d.h)); ctx.lineTo(x, y(d.l)); ctx.stroke();
-      const bodyTop = y(Math.max(d.o, d.c));
-      const bodyH = Math.max(1.2, Math.abs(y(d.o) - y(d.c)));
-      ctx.fillRect(x - cw * 0.32, bodyTop, Math.max(1, cw * 0.64), bodyH);
-    });
-
-    const last = data[data.length - 1];
-    const ly = y(last.c);
-    ctx.strokeStyle = 'rgba(255,149,0,0.4)';
-    ctx.setLineDash([2, 3]);
-    ctx.beginPath(); ctx.moveTo(padL, ly); ctx.lineTo(w - padR, ly); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = last.c >= last.o ? '#21c675' : '#ff4d4f';
-    ctx.fillRect(w - padR, ly - 8, padR, 16);
-    ctx.fillStyle = '#000';
-    ctx.fillText(last.c.toFixed(2), w - padR + 4, ly + 3);
-  }
-
   function drawLines(canvas, series) {
     const { ctx, w, h } = fitCanvas(canvas);
     ctx.clearRect(0, 0, w, h);
@@ -316,37 +271,94 @@
           <div style="display:flex;gap:4px;" id="chTf">
             ${['1m', '30m', '1h', 'D', 'W'].map((tf) => `<button data-tf="${tf}" class="btn" style="padding:4px 8px;${tf === initTf ? 'border-color:var(--accent);color:var(--accent)' : ''}">${tf}</button>`).join('')}
           </div>
+          <button class="btn" id="chReset" style="padding:4px 8px;margin-left:auto;" title="Reset zoom/pan">⤢ Fit</button>
         </div>
-        <canvas id="chCanvas" style="flex:1;width:100%;min-height:180px;"></canvas>
+        <div style="position:relative;flex:1;min-height:180px;">
+          <div id="chLegend" style="position:absolute;top:2px;left:4px;z-index:5;font-size:11px;line-height:1.6;pointer-events:none;color:var(--text-secondary);white-space:nowrap;"></div>
+          <div id="chHost" style="width:100%;height:100%;"></div>
+        </div>
       </div>`);
     body.classList.add('no-pad');
     body.style.padding = '10px';
     body.appendChild(wrap);
     const sel = wrap.querySelector('#chSel');
-    const canvas = wrap.querySelector('#chCanvas');
+    const host = wrap.querySelector('#chHost');
+    const legendEl = wrap.querySelector('#chLegend');
     let tf = initTf;
     let alive = true;
-    async function paint() {
-      const sym = M.ALL_SYMBOLS.find((s) => s.t === sel.value);
-      const series = await getSeries(sym.t, tf, sym.base);
-      if (!alive) return;
-      ctx.setBadge(series.live ? 'live' : 'sim');
-      drawCandles(canvas, series.data);
+    let chart = null, series = null, lastSym = '', lastBar = null;
+
+    function showLegendBar(bar) {
+      if (!bar) { legendEl.innerHTML = ''; return; }
+      const chg = bar.close - bar.open;
+      const chgPct = bar.open ? (chg / bar.open) * 100 : 0;
+      const cls = chg >= 0 ? 'up' : 'down';
+      legendEl.innerHTML = `<b style="color:var(--text-primary)">${lastSym}</b> &nbsp;`
+        + `O <span style="color:var(--text-primary)">${bar.open.toFixed(2)}</span> `
+        + `H <span style="color:var(--text-primary)">${bar.high.toFixed(2)}</span> `
+        + `L <span style="color:var(--text-primary)">${bar.low.toFixed(2)}</span> `
+        + `C <span style="color:var(--text-primary)">${bar.close.toFixed(2)}</span> `
+        + `<span class="${cls}">${chg >= 0 ? '+' : ''}${chg.toFixed(2)} (${chgPct >= 0 ? '+' : ''}${chgPct.toFixed(2)}%)</span>`;
     }
-    sel.addEventListener('change', () => { ctx.setConfig({ ticker: sel.value }); paint(); });
+
+    function ensureChart() {
+      if (chart) return;
+      chart = LightweightCharts.createChart(host, {
+        layout: { background: { color: 'transparent' }, textColor: '#9a978f', fontFamily: 'IBM Plex Mono, monospace', fontSize: 11 },
+        grid: { vertLines: { color: 'rgba(255,149,0,0.07)' }, horzLines: { color: 'rgba(255,149,0,0.07)' } },
+        rightPriceScale: { borderColor: '#262119' },
+        timeScale: { borderColor: '#262119', timeVisible: true, secondsVisible: false },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+          vertLine: { color: 'rgba(255,149,0,0.5)', labelBackgroundColor: '#ff9500' },
+          horzLine: { color: 'rgba(255,149,0,0.5)', labelBackgroundColor: '#ff9500' }
+        },
+        handleScroll: true,
+        handleScale: true
+      });
+      series = chart.addCandlestickSeries({
+        upColor: '#21c675', downColor: '#ff4d4f', borderVisible: false,
+        wickUpColor: '#21c675', wickDownColor: '#ff4d4f'
+      });
+      chart.subscribeCrosshairMove((param) => {
+        const bar = param && param.seriesData && series ? param.seriesData.get(series) : null;
+        showLegendBar(bar || lastBar);
+      });
+    }
+
+    async function paint(preserveRange) {
+      const sym = M.ALL_SYMBOLS.find((s) => s.t === sel.value);
+      const result = await getSeries(sym.t, tf, sym.base);
+      if (!alive) return;
+      ctx.setBadge(result.live ? 'live' : 'sim');
+      ensureChart();
+      const range = preserveRange ? chart.timeScale().getVisibleLogicalRange() : null;
+      const bars = result.data.map((d) => ({ time: Math.floor(d.t / 1000), open: d.o, high: d.h, low: d.l, close: d.c }));
+      series.setData(bars);
+      if (range) chart.timeScale().setVisibleLogicalRange(range);
+      else chart.timeScale().fitContent();
+      lastSym = sym.t;
+      lastBar = bars[bars.length - 1];
+      showLegendBar(lastBar);
+    }
+
+    sel.addEventListener('change', () => { ctx.setConfig({ ticker: sel.value }); paint(false); });
     wrap.querySelectorAll('[data-tf]').forEach((btn) => {
       btn.addEventListener('click', () => {
         tf = btn.dataset.tf;
         ctx.setConfig({ tf });
         wrap.querySelectorAll('[data-tf]').forEach((b) => { b.style.borderColor = ''; b.style.color = ''; });
         btn.style.borderColor = 'var(--accent)'; btn.style.color = 'var(--accent)';
-        paint();
+        paint(false);
       });
     });
-    paint();
-    const iv = setInterval(paint, 20000);
-    const ro = new ResizeObserver(paint); ro.observe(canvas);
-    return () => { alive = false; clearInterval(iv); ro.disconnect(); };
+    wrap.querySelector('#chReset').addEventListener('click', () => { if (chart) chart.timeScale().fitContent(); });
+
+    paint(false);
+    const iv = setInterval(() => paint(true), 20000);
+    const ro = new ResizeObserver(() => { if (chart) chart.resize(host.clientWidth, host.clientHeight); });
+    ro.observe(host);
+    return () => { alive = false; clearInterval(iv); ro.disconnect(); if (chart) chart.remove(); };
   }
 
   function renderCompareChart(body, ctx) {
