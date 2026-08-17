@@ -10,7 +10,6 @@
     { containerId: 'panelMood', defId: 'market-mood', key: 'market-mood' },
     { containerId: 'panelSocial', defId: 'social-volume', key: 'social-volume' },
     { containerId: 'panelHeatmap', defId: 'heatmap', key: 'heatmap' },
-    { containerId: 'panelGlobe', defId: 'trading-sessions', key: 'trading-sessions' },
     { containerId: 'panelNews', defId: 'live-news', key: 'live-news' },
     { containerId: 'panelCalendar', defId: 'economic-calendar', key: 'economic-calendar' }
   ];
