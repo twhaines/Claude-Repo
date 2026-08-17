@@ -148,25 +148,30 @@
     ctx.textAlign = 'left';
   }
 
-  const GLOBE_CAT_COLORS = {
-    Markets: '#ff9500', Technology: '#4d9fff', Energy: '#ff4d4f', Macro: '#ffd24d',
-    Financials: '#21c675', Crypto: '#c17dff', Materials: '#b56f00', Industrials: '#9a978f',
-    Politics: '#ff9500', Healthcare: '#21c675', General: '#ff9500', Business: '#4d9fff'
-  };
-  const REGION_LATLON = {
-    US: [39, -98], UK: [54, -2], EU: [50, 10], Asia: [30, 105], Japan: [36, 138],
-    'Middle East': [26, 45], India: [21, 78], Global: [10, 20], Europe: [48, 12]
-  };
-  function guessLatLon(region) {
-    return REGION_LATLON[region] || REGION_LATLON.Global;
+  const EXCHANGES = [
+    { name: 'Sydney', code: 'ASX', tz: 'Australia/Sydney', lat: -33.87, lon: 151.21, open: '10:00', close: '16:00' },
+    { name: 'Tokyo', code: 'TSE', tz: 'Asia/Tokyo', lat: 35.68, lon: 139.77, open: '09:00', close: '15:00' },
+    { name: 'Shanghai', code: 'SSE', tz: 'Asia/Shanghai', lat: 31.23, lon: 121.47, open: '09:30', close: '15:00' },
+    { name: 'London', code: 'LSE', tz: 'Europe/London', lat: 51.51, lon: -0.13, open: '08:00', close: '16:30' },
+    { name: 'New York', code: 'NYSE', tz: 'America/New_York', lat: 40.71, lon: -74.01, open: '09:30', close: '16:00' }
+  ];
+
+  function exchangeStatus(ex) {
+    const now = new Date();
+    const fmt = new Intl.DateTimeFormat('en-US', { timeZone: ex.tz, hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'short' });
+    const parts = fmt.formatToParts(now);
+    const weekday = parts.find((p) => p.type === 'weekday').value;
+    const hour = +parts.find((p) => p.type === 'hour').value;
+    const minute = +parts.find((p) => p.type === 'minute').value;
+    const mins = hour * 60 + minute;
+    const [oh, om] = ex.open.split(':').map(Number);
+    const [ch, cm] = ex.close.split(':').map(Number);
+    const isOpen = !['Sat', 'Sun'].includes(weekday) && mins >= oh * 60 + om && mins < ch * 60 + cm;
+    return { isOpen, localTime: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` };
   }
 
-  function mountGlobe(canvas, headlines) {
+  function mountSessionsGlobe(canvas, getStatuses) {
     let angle = 0, raf;
-    const pts = headlines.map((n) => {
-      const [lat, lon] = n.lat != null ? [n.lat, n.lon] : guessLatLon(n.region);
-      return { lat: (lat * Math.PI) / 180, lon: (lon * Math.PI) / 180, color: GLOBE_CAT_COLORS[n.cat] || '#ff9500' };
-    });
     function frame() {
       const { ctx, w, h } = fitCanvas(canvas);
       ctx.clearRect(0, 0, w, h);
@@ -183,23 +188,38 @@
         const a = angle + (i * Math.PI) / 6;
         ctx.beginPath(); ctx.ellipse(cx, cy, r * Math.abs(Math.cos(a)), r, 0, 0, Math.PI * 2); ctx.stroke();
       }
-      pts.forEach((p) => {
-        const lon = p.lon + angle;
-        const x = Math.cos(p.lat) * Math.sin(lon);
-        const z = Math.cos(p.lat) * Math.cos(lon);
-        const y3 = Math.sin(p.lat);
-        if (z < -0.15) return;
-        const sx = cx + x * r;
-        const sy = cy - y3 * r;
+      const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 400);
+      const statuses = getStatuses();
+      EXCHANGES.forEach((ex, i) => {
+        const lat = (ex.lat * Math.PI) / 180;
+        const lon = (ex.lon * Math.PI) / 180 + angle;
+        const x = Math.cos(lat) * Math.sin(lon);
+        const z = Math.cos(lat) * Math.cos(lon);
+        const y3 = Math.sin(lat);
+        if (z < -0.2) return;
+        const sx = cx + x * r, sy = cy - y3 * r;
         const scale = 0.5 + (z + 1) * 0.4;
+        const open = statuses[i] && statuses[i].isOpen;
+        const baseR = open ? 4 + pulse * 2.5 : 3;
+        if (open) {
+          ctx.beginPath();
+          ctx.arc(sx, sy, baseR + 5, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(33,198,117,${0.18 * pulse})`;
+          ctx.fill();
+        }
         ctx.beginPath();
-        ctx.arc(sx, sy, 2.4 * scale, 0, Math.PI * 2);
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = 0.55 + z * 0.45;
+        ctx.arc(sx, sy, baseR * scale, 0, Math.PI * 2);
+        ctx.fillStyle = open ? '#21c675' : '#5c5a54';
+        ctx.globalAlpha = 0.6 + z * 0.4;
         ctx.fill();
         ctx.globalAlpha = 1;
+        if (z > 0.1) {
+          ctx.fillStyle = open ? '#eae6df' : '#5c5a54';
+          ctx.font = '10px IBM Plex Mono, monospace';
+          ctx.fillText(ex.code, sx + 8, sy + 3);
+        }
       });
-      angle += 0.0022;
+      angle += 0.0016;
       raf = requestAnimationFrame(frame);
     }
     frame();
@@ -683,41 +703,37 @@
     return () => { alive = false; clearInterval(iv); };
   }
 
-  function renderNewsGlobe(body, ctx) {
+  function renderTradingSessions(body) {
     const wrap = h(`
       <div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:10px;height:100%;">
-        <canvas id="ngCanvas" style="width:100%;height:100%;"></canvas>
+        <canvas id="sessCanvas" style="width:100%;height:100%;"></canvas>
         <div style="overflow:auto;">
-          <div class="mono-label" style="margin-bottom:8px;" id="ngCount"></div>
-          <div style="display:flex;flex-direction:column;gap:9px;" id="ngList"></div>
+          <div class="mono-label" style="margin-bottom:8px;">Session Hours</div>
+          <div id="sessList" style="display:flex;flex-direction:column;gap:8px;"></div>
         </div>
       </div>`);
     body.appendChild(wrap);
-    const canvas = wrap.querySelector('#ngCanvas');
-    let destroyGlobe = null;
-    let alive = true;
-    async function paint() {
-      let items, live = true;
-      try {
-        items = await LD.getNews();
-        if (!items.length) throw new Error('empty');
-      } catch (e) {
-        items = M.NEWS_HEADLINES;
-        live = false;
-      }
-      if (!alive) return;
-      ctx.setBadge(live ? 'live' : 'sim');
-      wrap.querySelector('#ngCount').textContent = `${items.length} stories on the globe`;
-      wrap.querySelector('#ngList').innerHTML = items.map((n) => `<div style="border-left:2px solid ${GLOBE_CAT_COLORS[n.cat] || 'var(--accent)'};padding-left:8px;">
-          <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;">${n.cat} · ${n.region}</div>
-          <div style="font-size:11px;">${n.text}</div>
-        </div>`).join('');
-      if (destroyGlobe) destroyGlobe();
-      destroyGlobe = mountGlobe(canvas, items);
+    const canvas = wrap.querySelector('#sessCanvas');
+    const listEl = wrap.querySelector('#sessList');
+    let statuses = EXCHANGES.map(exchangeStatus);
+
+    function paintList() {
+      statuses = EXCHANGES.map(exchangeStatus);
+      listEl.innerHTML = EXCHANGES.map((ex, i) => {
+        const st = statuses[i];
+        return `<div style="display:flex;justify-content:space-between;align-items:center;border-left:2px solid ${st.isOpen ? 'var(--green)' : 'var(--panel-border-bright)'};padding:6px 8px;">
+          <div>
+            <div style="font-size:12px;color:var(--text-primary);">${ex.name} <span style="color:var(--text-dim);">${ex.code}</span></div>
+            <div style="font-size:10px;color:var(--text-dim);">${st.localTime} local</div>
+          </div>
+          <span class="pill" style="color:${st.isOpen ? 'var(--green)' : 'var(--text-dim)'};border-color:${st.isOpen ? 'var(--green-dim)' : 'var(--panel-border-bright)'};">${st.isOpen ? 'OPEN' : 'CLOSED'}</span>
+        </div>`;
+      }).join('');
     }
-    paint();
-    const iv = setInterval(paint, 2 * 60000);
-    return () => { alive = false; clearInterval(iv); if (destroyGlobe) destroyGlobe(); };
+    paintList();
+    const iv = setInterval(paintList, 15000);
+    const destroyGlobe = mountSessionsGlobe(canvas, () => statuses);
+    return () => { clearInterval(iv); destroyGlobe(); };
   }
 
   function impactDot(impact) {
@@ -855,7 +871,7 @@
     { id: 'seasonality', code: 'SE', category: 'Markets', title: 'Seasonality', desc: 'Monthly return pattern', size: 'md', render: renderSeasonality },
     { id: 'custom-index', code: 'CI', category: 'Markets', title: 'Custom Index', desc: 'Weighted basket', size: 'md', render: renderCustomIndex },
     { id: 'live-news', code: 'LN', category: 'News', title: 'Live News', desc: 'Wire headlines', size: 'md', render: renderLiveNews },
-    { id: 'news-globe', code: 'NG', category: 'News', title: 'News Globe', desc: 'Stories by location', size: 'xl', render: renderNewsGlobe },
+    { id: 'trading-sessions', code: 'TS', category: 'News', title: 'Trading Sessions', desc: 'Global market hours', size: 'xl', render: renderTradingSessions },
     { id: 'economic-calendar', code: 'EC', category: 'News', title: 'Economic Calendar', desc: 'Macro data drops', size: 'md', render: renderEconCalendar },
     { id: 'whales-13f', code: 'WH', category: 'Community', title: '13F Whales', desc: 'Institutional filings', size: 'lg', render: render13F },
     { id: 'risk-calculator', code: 'RC', category: 'Community', title: 'Risk Calculator', desc: 'Position sizing', size: 'sm', render: renderRiskCalc },
