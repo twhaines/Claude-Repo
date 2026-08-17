@@ -11,7 +11,9 @@
     { containerId: 'panelSocial', defId: 'social-volume', key: 'social-volume' },
     { containerId: 'panelHeatmap', defId: 'heatmap', key: 'heatmap' },
     { containerId: 'panelNews', defId: 'live-news', key: 'live-news' },
-    { containerId: 'panelCalendar', defId: 'economic-calendar', key: 'economic-calendar' }
+    { containerId: 'panelCalendar', defId: 'economic-calendar', key: 'economic-calendar' },
+    { containerId: 'panelTradeEntry', defId: 'trade-entry', key: 'trade-entry' },
+    { containerId: 'panelTradeLog', defId: 'trade-log', key: 'trade-log' }
   ];
 
   function findDef(defId) { return PANEL_DEFS.find((d) => d.id === defId); }
@@ -65,7 +67,11 @@
   }
 
   // ---------- tabs ----------
-  const boards = { markets: document.getElementById('boardMarkets'), news: document.getElementById('boardNews') };
+  const boards = {
+    markets: document.getElementById('boardMarkets'),
+    news: document.getElementById('boardNews'),
+    journal: document.getElementById('boardJournal')
+  };
   document.querySelectorAll('.tab').forEach((tabEl) => {
     tabEl.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
