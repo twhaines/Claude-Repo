@@ -76,6 +76,27 @@
     return M.ALL_SYMBOLS.map((s) => `<option value="${s.t}" ${s.t === selected ? 'selected' : ''}>${s.t} — ${s.name}</option>`).join('');
   }
 
+  // ---------- trading journal (shared between the entry form and the log) ----------
+  const JOURNAL_KEY = 'vt-journal-trades';
+  const FUTURES_MULTIPLIERS = {
+    'ES=F': 50, 'NQ=F': 20, 'CL=F': 1000, 'GC=F': 100, 'SI=F': 5000,
+    'ZC=F': 50, 'ZN=F': 1000, 'NG=F': 10000, '6E=F': 125000
+  };
+  function multiplierFor(ticker) { return FUTURES_MULTIPLIERS[ticker] || 1; }
+  function tradePnL(t) {
+    const dir = t.direction === 'short' ? -1 : 1;
+    return (t.exit - t.entry) * dir * multiplierFor(t.ticker) * t.size;
+  }
+  function loadTrades() {
+    try { return JSON.parse(localStorage.getItem(JOURNAL_KEY)) || []; } catch (e) { return []; }
+  }
+  function saveTrades(trades) {
+    try { localStorage.setItem(JOURNAL_KEY, JSON.stringify(trades)); } catch (e) { /* storage unavailable */ }
+  }
+  const journalListeners = [];
+  function onTradesChanged(cb) { journalListeners.push(cb); }
+  function notifyTradesChanged() { journalListeners.forEach((cb) => cb()); }
+
   // ---------- canvas drawing primitives ----------
   function drawLines(canvas, series) {
     const { ctx, w, h } = fitCanvas(canvas);
@@ -749,6 +770,155 @@
     ta.addEventListener('input', () => localStorage.setItem(key, ta.value));
   }
 
+  function renderTradeEntry(body) {
+    const wrap = h(`
+      <div style="display:flex;flex-direction:column;gap:8px;font-size:11px;">
+        <label>Date<input id="teDate" type="date" style="width:100%;padding:5px;margin-top:3px;"></label>
+        <label>Ticker<select id="teTicker" style="width:100%;padding:5px;margin-top:3px;">${tickerOptions('ES=F')}</select></label>
+        <div>
+          Direction
+          <div style="display:flex;gap:6px;margin-top:3px;">
+            <button type="button" class="btn" data-dir="long" style="flex:1;padding:6px;">Long</button>
+            <button type="button" class="btn" data-dir="short" style="flex:1;padding:6px;">Short</button>
+          </div>
+        </div>
+        <label>Entry Price<input id="teEntry" type="number" step="any" style="width:100%;padding:5px;margin-top:3px;"></label>
+        <label>Exit Price<input id="teExit" type="number" step="any" style="width:100%;padding:5px;margin-top:3px;"></label>
+        <label>Size (contracts/shares)<input id="teSize" type="number" value="1" min="1" style="width:100%;padding:5px;margin-top:3px;"></label>
+        <label>Notes / Setup<textarea id="teNotes" rows="3" style="width:100%;padding:5px;margin-top:3px;resize:vertical;"></textarea></label>
+        <button class="btn btn--primary" id="teAdd" style="padding:8px;margin-top:4px;">+ Add Trade</button>
+        <div id="teMsg" style="font-size:10px;"></div>
+      </div>`);
+    body.appendChild(wrap);
+
+    const dateEl = wrap.querySelector('#teDate');
+    dateEl.value = new Date().toISOString().slice(0, 10);
+    let direction = 'long';
+    wrap.querySelectorAll('[data-dir]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        direction = btn.dataset.dir;
+        wrap.querySelectorAll('[data-dir]').forEach((b) => { b.style.borderColor = ''; b.style.color = ''; });
+        btn.style.borderColor = direction === 'long' ? 'var(--green)' : 'var(--red)';
+        btn.style.color = direction === 'long' ? 'var(--green)' : 'var(--red)';
+      });
+    });
+    wrap.querySelector('[data-dir="long"]').click();
+
+    wrap.querySelector('#teAdd').addEventListener('click', () => {
+      const entry = +wrap.querySelector('#teEntry').value;
+      const exit = +wrap.querySelector('#teExit').value;
+      const size = +wrap.querySelector('#teSize').value || 1;
+      const ticker = wrap.querySelector('#teTicker').value;
+      const date = dateEl.value;
+      const notes = wrap.querySelector('#teNotes').value.trim();
+      const msgEl = wrap.querySelector('#teMsg');
+      if (!entry || !exit) {
+        msgEl.style.color = 'var(--red)';
+        msgEl.textContent = 'Entry and exit price are required.';
+        return;
+      }
+      const trades = loadTrades();
+      trades.unshift({ id: 'trd_' + Date.now(), date, ticker, direction, entry, exit, size, notes });
+      saveTrades(trades);
+      notifyTradesChanged();
+      wrap.querySelector('#teEntry').value = '';
+      wrap.querySelector('#teExit').value = '';
+      wrap.querySelector('#teNotes').value = '';
+      msgEl.style.color = 'var(--green)';
+      msgEl.textContent = 'Trade logged.';
+      setTimeout(() => { if (msgEl.textContent === 'Trade logged.') msgEl.textContent = ''; }, 2500);
+    });
+  }
+
+  function renderTradeLog(body) {
+    const wrap = h(`
+      <div style="display:flex;flex-direction:column;height:100%;">
+        <div id="tlStats" style="display:flex;gap:20px;flex-wrap:wrap;padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid var(--hairline);font-size:11px;flex-shrink:0;"></div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;flex-shrink:0;align-items:center;">
+          <button class="btn" id="tlExport" style="padding:4px 10px;font-size:11px;">Export JSON</button>
+          <label class="btn" style="padding:4px 10px;font-size:11px;cursor:pointer;">Import JSON<input type="file" id="tlImport" accept="application/json" style="display:none;"></label>
+          <span style="font-size:10px;color:var(--text-dim);">P&amp;L uses standard CME contract multipliers — verify against your broker</span>
+        </div>
+        <div style="flex:1;overflow:auto;">
+          <table class="dtable"><thead><tr><th>Date</th><th>Ticker</th><th>Dir</th><th>Entry</th><th>Exit</th><th>Size</th><th>P&amp;L</th><th>Notes</th><th></th></tr></thead><tbody id="tlBody"></tbody></table>
+        </div>
+      </div>`);
+    body.appendChild(wrap);
+    const statsEl = wrap.querySelector('#tlStats');
+    const bodyEl = wrap.querySelector('#tlBody');
+
+    function paint() {
+      const trades = loadTrades();
+      const withPnL = trades.map((t) => ({ ...t, pnl: tradePnL(t) }));
+      const wins = withPnL.filter((t) => t.pnl > 0);
+      const losses = withPnL.filter((t) => t.pnl < 0);
+      const totalPnL = withPnL.reduce((s, t) => s + t.pnl, 0);
+      const winRate = trades.length ? (wins.length / trades.length) * 100 : 0;
+      const avgWin = wins.length ? wins.reduce((s, t) => s + t.pnl, 0) / wins.length : 0;
+      const avgLoss = losses.length ? losses.reduce((s, t) => s + t.pnl, 0) / losses.length : 0;
+
+      statsEl.innerHTML = `
+        <div>Trades<br><b style="color:var(--text-primary);font-size:14px;">${trades.length}</b></div>
+        <div>Win Rate<br><b style="color:var(--text-primary);font-size:14px;">${winRate.toFixed(0)}%</b></div>
+        <div>Total P&amp;L<br><b style="font-size:14px;" class="${totalPnL >= 0 ? 'up' : 'down'}">${totalPnL >= 0 ? '+' : ''}$${totalPnL.toFixed(2)}</b></div>
+        <div>Avg Win<br><b style="color:var(--green);font-size:14px;">$${avgWin.toFixed(2)}</b></div>
+        <div>Avg Loss<br><b style="color:var(--red);font-size:14px;">$${avgLoss.toFixed(2)}</b></div>`;
+
+      bodyEl.innerHTML = withPnL.length ? withPnL.map((t) => `
+        <tr>
+          <td>${t.date}</td>
+          <td>${t.ticker}</td>
+          <td class="${t.direction === 'long' ? 'up' : 'down'}">${t.direction.toUpperCase()}</td>
+          <td>${t.entry}</td>
+          <td>${t.exit}</td>
+          <td>${t.size}</td>
+          <td class="${t.pnl >= 0 ? 'up' : 'down'}">${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}</td>
+          <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim);">${t.notes || ''}</td>
+          <td><span data-del="${t.id}" style="cursor:pointer;color:var(--text-dim);" title="Delete">✕</span></td>
+        </tr>`).join('') : `<tr><td colspan="9" style="color:var(--text-dim);text-align:center;padding:24px;">No trades logged yet — add one on the left.</td></tr>`;
+
+      bodyEl.querySelectorAll('[data-del]').forEach((el) => {
+        el.addEventListener('click', () => {
+          if (!confirm('Delete this trade?')) return;
+          saveTrades(loadTrades().filter((t) => t.id !== el.dataset.del));
+          notifyTradesChanged();
+        });
+      });
+    }
+
+    wrap.querySelector('#tlExport').addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(loadTrades(), null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'vintage-terminal-journal-' + new Date().toISOString().slice(0, 10) + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+    wrap.querySelector('#tlImport').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const imported = JSON.parse(reader.result);
+          if (!Array.isArray(imported)) throw new Error('file is not a trade list');
+          const existing = loadTrades();
+          const merged = existing.concat(imported.filter((t) => !existing.some((e2) => e2.id === t.id)));
+          saveTrades(merged);
+          notifyTradesChanged();
+        } catch (err) {
+          alert('Could not import file: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    });
+
+    paint();
+    onTradesChanged(paint);
+  }
+
   const PANEL_DEFS = [
     { id: 'quote-monitor', code: 'QM', category: 'Markets', title: 'Quote Monitor', desc: 'Live watchlist', size: 'md', render: renderQuoteMonitor },
     { id: 'overview', code: 'OV', category: 'Markets', title: 'Overview', desc: 'Company at a glance', size: 'md', render: renderOverview },
@@ -767,7 +937,9 @@
     { id: 'whales-13f', code: 'WH', category: 'Community', title: '13F Whales', desc: 'Institutional filings', size: 'lg', render: render13F },
     { id: 'risk-calculator', code: 'RC', category: 'Community', title: 'Risk Calculator', desc: 'Position sizing', size: 'sm', render: renderRiskCalc },
     { id: 'market-mood', code: 'MM', category: 'Community', title: 'Market Mood', desc: 'Sentiment gauge', size: 'sm', render: renderMarketMood },
-    { id: 'notes', code: 'NO', category: 'Community', title: 'Notes', desc: 'Scratchpad', size: 'sm', render: renderNotes }
+    { id: 'notes', code: 'NO', category: 'Community', title: 'Notes', desc: 'Scratchpad', size: 'sm', render: renderNotes },
+    { id: 'trade-entry', code: 'TE', category: 'Journal', title: 'New Trade', desc: 'Log a trade', size: 'sm', render: renderTradeEntry },
+    { id: 'trade-log', code: 'TL', category: 'Journal', title: 'Trade Log', desc: 'History & stats', size: 'lg', render: renderTradeLog }
   ];
 
   global.PanelRegistry = { PANEL_DEFS };

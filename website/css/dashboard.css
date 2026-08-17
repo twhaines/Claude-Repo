@@ -71,12 +71,19 @@ html, body { height: 100%; overflow: hidden; }
     "news"
     "calendar";
 }
+.dash-grid--journal {
+  grid-template-columns: 1fr 2.3fr;
+  grid-template-rows: 1fr;
+  grid-template-areas: "entry log";
+}
 .area-chart { grid-area: chart; }
 .area-mood { grid-area: mood; }
 .area-social { grid-area: social; }
 .area-heatmap { grid-area: heatmap; }
 .area-news { grid-area: news; }
 .area-calendar { grid-area: calendar; }
+.area-entry { grid-area: entry; }
+.area-log { grid-area: log; }
 
 @media (max-width: 900px) {
   .dash-grid { display: flex; flex-direction: column; min-height: 0; }
