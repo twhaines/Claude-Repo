@@ -13,9 +13,6 @@
 <div class="app">
   <div class="topbar">
     <span class="brand"><span class="brand__mark"></span>VINTAGE TERMINAL</span>
-    <div class="topbar__search" id="openPaletteBtn">
-      <span>⌕</span><span>Search by name or code…</span><kbd>/</kbd>
-    </div>
     <div class="topbar__status">
       <span class="status-dot" id="marketDot"></span>
       <span id="marketStatus">Markets closed</span>
@@ -25,25 +22,29 @@
       <span><b>NY</b><span id="clockNY">--:--</span></span>
       <span><b>TYO</b><span id="clockTYO">--:--</span></span>
     </div>
-    <span class="topbar__icon" id="openLayoutsBtn" title="Layouts">▦</span>
     <span class="topbar__icon" id="openSettingsBtn" title="Settings / API keys">⚙</span>
   </div>
 
-  <div class="tabbar" id="tabbar"></div>
+  <div class="tabbar" id="tabbar">
+    <div class="tab active" data-tab="markets">Markets</div>
+    <div class="tab" data-tab="news">News</div>
+  </div>
 
-  <div class="board" id="board"></div>
-</div>
+  <div class="board" id="boardMarkets">
+    <div class="dash-grid dash-grid--markets">
+      <div class="panel area-chart" id="panelChart"></div>
+      <div class="panel area-mood" id="panelMood"></div>
+      <div class="panel area-social" id="panelSocial"></div>
+      <div class="panel area-heatmap" id="panelHeatmap"></div>
+    </div>
+  </div>
 
-<div class="palette-overlay hidden" id="paletteOverlay">
-  <div class="palette">
-    <div class="palette__head">
-      <div><b>ADD A PANEL</b><span>press / with a code for quick access</span></div>
-      <div class="palette__close" id="paletteClose">ESC to close</div>
+  <div class="board hidden" id="boardNews">
+    <div class="dash-grid dash-grid--news">
+      <div class="panel area-globe" id="panelGlobe"></div>
+      <div class="panel area-news" id="panelNews"></div>
+      <div class="panel area-calendar" id="panelCalendar"></div>
     </div>
-    <div class="palette__search">
-      <input type="text" id="paletteInput" placeholder="Search by name or code, Enter to open" autocomplete="off">
-    </div>
-    <div class="palette__results" id="paletteResults"></div>
   </div>
 </div>
 
@@ -70,16 +71,6 @@
       </div>
       <button class="btn btn--primary" id="settingsSave" style="align-self:flex-start;padding:8px 16px;">Save</button>
     </div>
-  </div>
-</div>
-
-<div class="palette-overlay hidden" id="layoutsOverlay">
-  <div class="palette" style="width:min(720px,92vw);">
-    <div class="palette__head">
-      <div><b>LAYOUTS</b><span>pick a preset or save your own</span></div>
-      <div class="palette__close" id="layoutsClose">ESC to close</div>
-    </div>
-    <div class="palette__results" id="layoutsResults" style="padding:16px;"></div>
   </div>
 </div>
 
