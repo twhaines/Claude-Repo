@@ -65,17 +65,16 @@ html, body { height: 100%; overflow: hidden; }
     "heatmap heatmap";
 }
 .dash-grid--news {
-  grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1.4fr 1fr;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1.7fr 1fr;
   grid-template-areas:
-    "globe globe"
-    "news calendar";
+    "news"
+    "calendar";
 }
 .area-chart { grid-area: chart; }
 .area-mood { grid-area: mood; }
 .area-social { grid-area: social; }
 .area-heatmap { grid-area: heatmap; }
-.area-globe { grid-area: globe; }
 .area-news { grid-area: news; }
 .area-calendar { grid-area: calendar; }
 
@@ -105,6 +104,9 @@ html, body { height: 100%; overflow: hidden; }
 .panel__subtitle { font-size: 10px; color: var(--text-dim); }
 .panel__body { flex: 1; overflow: auto; padding: 10px; font-size: 12px; position: relative; }
 .panel__body.no-pad { padding: 0; }
+
+.news-link:hover { color: var(--accent); }
+.news-link:hover > div:first-child { color: var(--accent-dim); }
 
 /* generic tables inside panels */
 .dtable { width: 100%; border-collapse: collapse; font-size: 12px; }

@@ -148,84 +148,6 @@
     ctx.textAlign = 'left';
   }
 
-  const EXCHANGES = [
-    { name: 'Sydney', code: 'ASX', tz: 'Australia/Sydney', lat: -33.87, lon: 151.21, open: '10:00', close: '16:00' },
-    { name: 'Tokyo', code: 'TSE', tz: 'Asia/Tokyo', lat: 35.68, lon: 139.77, open: '09:00', close: '15:00' },
-    { name: 'Shanghai', code: 'SSE', tz: 'Asia/Shanghai', lat: 31.23, lon: 121.47, open: '09:30', close: '15:00' },
-    { name: 'London', code: 'LSE', tz: 'Europe/London', lat: 51.51, lon: -0.13, open: '08:00', close: '16:30' },
-    { name: 'New York', code: 'NYSE', tz: 'America/New_York', lat: 40.71, lon: -74.01, open: '09:30', close: '16:00' }
-  ];
-
-  function exchangeStatus(ex) {
-    const now = new Date();
-    const fmt = new Intl.DateTimeFormat('en-US', { timeZone: ex.tz, hour: '2-digit', minute: '2-digit', hour12: false, weekday: 'short' });
-    const parts = fmt.formatToParts(now);
-    const weekday = parts.find((p) => p.type === 'weekday').value;
-    const hour = +parts.find((p) => p.type === 'hour').value;
-    const minute = +parts.find((p) => p.type === 'minute').value;
-    const mins = hour * 60 + minute;
-    const [oh, om] = ex.open.split(':').map(Number);
-    const [ch, cm] = ex.close.split(':').map(Number);
-    const isOpen = !['Sat', 'Sun'].includes(weekday) && mins >= oh * 60 + om && mins < ch * 60 + cm;
-    return { isOpen, localTime: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}` };
-  }
-
-  function mountSessionsGlobe(canvas, getStatuses) {
-    let angle = 0, raf;
-    function frame() {
-      const { ctx, w, h } = fitCanvas(canvas);
-      ctx.clearRect(0, 0, w, h);
-      if (w < 24 || h < 24) { raf = requestAnimationFrame(frame); return; }
-      const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 10;
-      ctx.strokeStyle = 'rgba(255,149,0,0.18)';
-      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
-      for (let i = -2; i <= 2; i++) {
-        const rr = r * Math.cos((i * Math.PI) / 8);
-        const yy = cy + r * Math.sin((i * Math.PI) / 8);
-        ctx.beginPath(); ctx.ellipse(cx, yy, Math.abs(rr), Math.abs(rr) * 0.28, 0, 0, Math.PI * 2); ctx.stroke();
-      }
-      for (let i = 0; i < 6; i++) {
-        const a = angle + (i * Math.PI) / 6;
-        ctx.beginPath(); ctx.ellipse(cx, cy, r * Math.abs(Math.cos(a)), r, 0, 0, Math.PI * 2); ctx.stroke();
-      }
-      const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 400);
-      const statuses = getStatuses();
-      EXCHANGES.forEach((ex, i) => {
-        const lat = (ex.lat * Math.PI) / 180;
-        const lon = (ex.lon * Math.PI) / 180 + angle;
-        const x = Math.cos(lat) * Math.sin(lon);
-        const z = Math.cos(lat) * Math.cos(lon);
-        const y3 = Math.sin(lat);
-        if (z < -0.2) return;
-        const sx = cx + x * r, sy = cy - y3 * r;
-        const scale = 0.5 + (z + 1) * 0.4;
-        const open = statuses[i] && statuses[i].isOpen;
-        const baseR = open ? 4 + pulse * 2.5 : 3;
-        if (open) {
-          ctx.beginPath();
-          ctx.arc(sx, sy, baseR + 5, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(33,198,117,${0.18 * pulse})`;
-          ctx.fill();
-        }
-        ctx.beginPath();
-        ctx.arc(sx, sy, baseR * scale, 0, Math.PI * 2);
-        ctx.fillStyle = open ? '#21c675' : '#5c5a54';
-        ctx.globalAlpha = 0.6 + z * 0.4;
-        ctx.fill();
-        ctx.globalAlpha = 1;
-        if (z > 0.1) {
-          ctx.fillStyle = open ? '#eae6df' : '#5c5a54';
-          ctx.font = '10px IBM Plex Mono, monospace';
-          ctx.fillText(ex.code, sx + 8, sy + 3);
-        }
-      });
-      angle += 0.0016;
-      raf = requestAnimationFrame(frame);
-    }
-    frame();
-    return () => cancelAnimationFrame(raf);
-  }
-
   // ---------- individual panel renderers ----------
 
   function renderQuoteMonitor(body, ctx) {
@@ -678,7 +600,7 @@
   }
 
   function renderLiveNews(body, ctx) {
-    const wrap = h(`<div id="lnList" style="display:flex;flex-direction:column;gap:10px;"></div>`);
+    const wrap = h(`<div id="lnList" style="display:flex;flex-direction:column;gap:12px;"></div>`);
     body.appendChild(wrap);
     let alive = true;
     async function paint() {
@@ -692,48 +614,18 @@
       }
       if (!alive) return;
       ctx.setBadge(live ? 'live' : 'sim');
-      wrap.innerHTML = items.slice(0, 14).map((n) => `
-        <div style="border-left:2px solid var(--accent-dim);padding-left:8px;">
+      wrap.innerHTML = items.slice(0, 24).map((n) => {
+        const url = n.url || 'https://news.google.com/search?q=' + encodeURIComponent(n.text);
+        return `
+        <a href="${url}" target="_blank" rel="noopener" class="news-link" style="display:block;border-left:2px solid var(--accent-dim);padding-left:8px;color:inherit;">
           <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;">${n.cat} · ${n.region}</div>
-          <div style="font-size:12px;">${n.url ? `<a href="${n.url}" target="_blank" rel="noopener" style="color:inherit;">${n.text}</a>` : n.text}</div>
-        </div>`).join('');
+          <div style="font-size:13px;">${n.text}</div>
+        </a>`;
+      }).join('');
     }
     paint();
     const iv = setInterval(paint, 2 * 60000);
     return () => { alive = false; clearInterval(iv); };
-  }
-
-  function renderTradingSessions(body) {
-    const wrap = h(`
-      <div style="display:grid;grid-template-columns:1.1fr 0.9fr;gap:10px;height:100%;">
-        <canvas id="sessCanvas" style="width:100%;height:100%;"></canvas>
-        <div style="overflow:auto;">
-          <div class="mono-label" style="margin-bottom:8px;">Session Hours</div>
-          <div id="sessList" style="display:flex;flex-direction:column;gap:8px;"></div>
-        </div>
-      </div>`);
-    body.appendChild(wrap);
-    const canvas = wrap.querySelector('#sessCanvas');
-    const listEl = wrap.querySelector('#sessList');
-    let statuses = EXCHANGES.map(exchangeStatus);
-
-    function paintList() {
-      statuses = EXCHANGES.map(exchangeStatus);
-      listEl.innerHTML = EXCHANGES.map((ex, i) => {
-        const st = statuses[i];
-        return `<div style="display:flex;justify-content:space-between;align-items:center;border-left:2px solid ${st.isOpen ? 'var(--green)' : 'var(--panel-border-bright)'};padding:6px 8px;">
-          <div>
-            <div style="font-size:12px;color:var(--text-primary);">${ex.name} <span style="color:var(--text-dim);">${ex.code}</span></div>
-            <div style="font-size:10px;color:var(--text-dim);">${st.localTime} local</div>
-          </div>
-          <span class="pill" style="color:${st.isOpen ? 'var(--green)' : 'var(--text-dim)'};border-color:${st.isOpen ? 'var(--green-dim)' : 'var(--panel-border-bright)'};">${st.isOpen ? 'OPEN' : 'CLOSED'}</span>
-        </div>`;
-      }).join('');
-    }
-    paintList();
-    const iv = setInterval(paintList, 15000);
-    const destroyGlobe = mountSessionsGlobe(canvas, () => statuses);
-    return () => { clearInterval(iv); destroyGlobe(); };
   }
 
   function impactDot(impact) {
@@ -871,7 +763,6 @@
     { id: 'seasonality', code: 'SE', category: 'Markets', title: 'Seasonality', desc: 'Monthly return pattern', size: 'md', render: renderSeasonality },
     { id: 'custom-index', code: 'CI', category: 'Markets', title: 'Custom Index', desc: 'Weighted basket', size: 'md', render: renderCustomIndex },
     { id: 'live-news', code: 'LN', category: 'News', title: 'Live News', desc: 'Wire headlines', size: 'md', render: renderLiveNews },
-    { id: 'trading-sessions', code: 'TS', category: 'News', title: 'Trading Sessions', desc: 'Global market hours', size: 'xl', render: renderTradingSessions },
     { id: 'economic-calendar', code: 'EC', category: 'News', title: 'Economic Calendar', desc: 'Macro data drops', size: 'md', render: renderEconCalendar },
     { id: 'whales-13f', code: 'WH', category: 'Community', title: '13F Whales', desc: 'Institutional filings', size: 'lg', render: render13F },
     { id: 'risk-calculator', code: 'RC', category: 'Community', title: 'Risk Calculator', desc: 'Position sizing', size: 'sm', render: renderRiskCalc },
