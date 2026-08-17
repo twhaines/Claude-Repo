@@ -106,6 +106,7 @@
   function drawDonut(canvas, slices) {
     const { ctx, w, h } = fitCanvas(canvas);
     ctx.clearRect(0, 0, w, h);
+    if (w < 8 || h < 8) return;
     const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 4, ir = r * 0.58;
     let start = -Math.PI / 2;
     const colors = ['#ff9500', '#21c675', '#ff4d4f', '#4d9fff', '#c17dff', '#ffd24d', '#5c5a54'];
@@ -127,6 +128,7 @@
   function drawGauge(canvas, value01, label) {
     const { ctx, w, h } = fitCanvas(canvas);
     ctx.clearRect(0, 0, w, h);
+    if (w < 40 || h < 40) return;
     const cx = w / 2, cy = h - 14, r = Math.min(w / 2, h) - 20;
     ctx.lineWidth = 12;
     ctx.strokeStyle = '#1a1a1c';
@@ -168,6 +170,7 @@
     function frame() {
       const { ctx, w, h } = fitCanvas(canvas);
       ctx.clearRect(0, 0, w, h);
+      if (w < 24 || h < 24) { raf = requestAnimationFrame(frame); return; }
       const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 10;
       ctx.strokeStyle = 'rgba(255,149,0,0.18)';
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
