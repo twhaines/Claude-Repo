@@ -741,24 +741,38 @@
     paint();
   }
 
+  function getChartConfig() {
+    try {
+      const all = JSON.parse(localStorage.getItem('vt-panel-config')) || {};
+      return all.chart || { ticker: 'ES=F' };
+    } catch (e) { return { ticker: 'ES=F' }; }
+  }
+
   function renderMarketMood(body, ctx) {
-    const wrap = h(`<div style="text-align:center;"><canvas id="mmGauge" style="width:100%;height:120px;"></canvas><div class="mono-label" style="margin-top:6px;">Market Breadth</div></div>`);
+    const wrap = h(`<div style="text-align:center;"><canvas id="mmGauge" style="width:100%;height:120px;"></canvas><div class="mono-label" style="margin-top:6px;" id="mmLabel"></div></div>`);
     body.appendChild(wrap);
     const canvas = wrap.querySelector('#mmGauge');
+    const labelEl = wrap.querySelector('#mmLabel');
     let alive = true;
+    let gen = 0;
     async function paint() {
-      const { results, anyLive } = await batchQuotes(M.ALL_SYMBOLS);
-      if (!alive) return;
-      ctx.setBadge(anyLive ? 'live' : 'sim');
-      const up = results.filter((r) => r.chgPct >= 0).length;
-      const value = up / results.length;
-      const label = value < 0.35 ? 'Risk-Off' : value < 0.65 ? 'Neutral' : 'Risk-On';
+      const myGen = ++gen;
+      const { ticker } = getChartConfig();
+      const sym = M.ALL_SYMBOLS.find((s) => s.t === ticker) || M.ALL_SYMBOLS[0];
+      const q = await liveQuote(sym);
+      if (!alive || myGen !== gen) return;
+      ctx.setBadge(q.live ? 'live' : 'sim');
+      const value = Math.max(0, Math.min(1, (q.chgPct + 3) / 6));
+      const label = q.chgPct < -1 ? 'Bearish' : q.chgPct > 1 ? 'Bullish' : 'Neutral';
       drawGauge(canvas, value, label);
+      labelEl.textContent = `Tracking ${sym.t} · ${q.chgPct >= 0 ? '+' : ''}${q.chgPct.toFixed(2)}%`;
     }
     paint();
     const iv = setInterval(paint, 20000);
+    const onCfgChange = (e) => { if (e.detail && e.detail.key === 'chart') paint(); };
+    window.addEventListener('vt-panel-config-changed', onCfgChange);
     const ro = new ResizeObserver(paint); ro.observe(canvas);
-    return () => { alive = false; clearInterval(iv); ro.disconnect(); };
+    return () => { alive = false; clearInterval(iv); ro.disconnect(); window.removeEventListener('vt-panel-config-changed', onCfgChange); };
   }
 
   function renderNotes(body, ctx) {
@@ -936,7 +950,7 @@
     { id: 'economic-calendar', code: 'EC', category: 'News', title: 'Economic Calendar', desc: 'Macro data drops', size: 'md', render: renderEconCalendar },
     { id: 'whales-13f', code: 'WH', category: 'Community', title: '13F Whales', desc: 'Institutional filings', size: 'lg', render: render13F },
     { id: 'risk-calculator', code: 'RC', category: 'Community', title: 'Risk Calculator', desc: 'Position sizing', size: 'sm', render: renderRiskCalc },
-    { id: 'market-mood', code: 'MM', category: 'Community', title: 'Market Mood', desc: 'Sentiment gauge', size: 'sm', render: renderMarketMood },
+    { id: 'market-mood', code: 'MM', category: 'Community', title: 'Market Mood', desc: 'Tracks the chart above', size: 'sm', render: renderMarketMood },
     { id: 'notes', code: 'NO', category: 'Community', title: 'Notes', desc: 'Scratchpad', size: 'sm', render: renderNotes },
     { id: 'trade-entry', code: 'TE', category: 'Journal', title: 'New Trade', desc: 'Log a trade', size: 'sm', render: renderTradeEntry },
     { id: 'trade-log', code: 'TL', category: 'Journal', title: 'Trade Log', desc: 'History & stats', size: 'lg', render: renderTradeLog }
