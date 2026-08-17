@@ -49,7 +49,11 @@
     const ctx = {
       uid: spec.key,
       config,
-      setConfig(patch) { Object.assign(config, patch); savePanelConfigs(); },
+      setConfig(patch) {
+        Object.assign(config, patch);
+        savePanelConfigs();
+        window.dispatchEvent(new CustomEvent('vt-panel-config-changed', { detail: { key: spec.key } }));
+      },
       setBadge(status) {
         if (!status) { badgeEl.style.display = 'none'; return; }
         badgeEl.style.display = '';
