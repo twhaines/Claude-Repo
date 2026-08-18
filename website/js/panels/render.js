@@ -691,7 +691,7 @@
     async function paint() {
       let rows, live = true, reason = '';
       try {
-        rows = await LD.getEconCalendar();
+        rows = await LD.getForexFactoryCalendar();
         if (!rows.length) throw new Error('empty');
       } catch (e) {
         rows = M.generateWeekEvents();
@@ -707,7 +707,7 @@
         return `<tr>
           <td style="color:var(--text-dim);white-space:nowrap;">${showDay ? dayLabel(e.date) : ''}</td>
           <td>${e.time}</td>
-          <td>${impactDot(e.impact)}<a href="${econEventUrl(e.name)}" target="_blank" rel="noopener" class="news-link" style="color:inherit;">${e.name}</a></td>
+          <td>${impactDot(e.impact)}${e.country ? `<span class="pill" style="margin-right:6px;">${e.country}</span>` : ''}<a href="${econEventUrl(e.name)}" target="_blank" rel="noopener" class="news-link" style="color:inherit;">${e.name}</a></td>
           <td>${e.actual}</td><td>${e.forecast}</td><td>${e.prev}</td>
         </tr>`;
       }).join('');

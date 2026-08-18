@@ -183,7 +183,7 @@
     const rnd = seededRandom(hashStr(mon + 'econ'));
     const pct = (base, spread) => (base + rnd() * spread).toFixed(1) + '%';
     const num = (base, spread, suffix) => (base + rnd() * spread).toFixed(1) + suffix;
-    return [
+    const events = [
       { date: mon, time: '10:00', name: 'ISM Manufacturing PMI', impact: 'medium', actual: '—', forecast: num(48, 3, ''), prev: num(47, 3, '') },
       { date: mon, time: '14:00', name: 'Fed Speaker: Williams', impact: 'low', actual: '—', forecast: '—', prev: '—' },
       { date: tue, time: '08:30', name: 'Trade Balance', impact: 'low', actual: '—', forecast: '-$' + num(58, 10, 'B'), prev: '-$' + num(56, 10, 'B') },
@@ -198,6 +198,7 @@
       { date: fri, time: '08:30', name: 'Unemployment Rate', impact: 'high', actual: '—', forecast: pct(4.0, 0.4), prev: pct(4.0, 0.4) },
       { date: fri, time: '10:00', name: 'Michigan Consumer Sentiment', impact: 'medium', actual: '—', forecast: num(65, 10, ''), prev: num(64, 10, '') }
     ];
+    return events.map((e) => Object.assign({ country: 'USD' }, e));
   }
 
   const PREDICTION_MARKETS = [
