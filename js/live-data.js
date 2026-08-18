@@ -139,45 +139,37 @@
     });
   }
 
-  function weekRange() {
-    const now = new Date();
-    const day = now.getDay();
-    const monday = new Date(now);
-    monday.setDate(now.getDate() + (day === 0 ? -6 : 1 - day));
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    const iso = (d) => d.toISOString().slice(0, 10);
-    return { from: iso(monday), to: iso(sunday) };
-  }
+  // ---------- ForexFactory economic calendar (via the FairEconomy JSON
+  // mirror widely used by free trading tools), no key ----------
+  const MAJOR_FF_CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'CNY'];
 
-  const MAJOR_ECON_COUNTRIES = ['US', 'EU', 'GB', 'JP', 'CN', 'DE'];
-
-  async function getEconCalendar() {
-    const { finnhubKey } = getSettings();
-    if (!finnhubKey) throw new Error('no finnhub key');
-    const { from, to } = weekRange();
-    return cached('fh-cal-' + from, 3600000, async () => {
-      const data = await fetchJSON(`https://finnhub.io/api/v1/calendar/economic?from=${from}&to=${to}&token=${encodeURIComponent(finnhubKey)}`, { proxyOnFail: false });
-      const rows = data.economicCalendar || data.result || [];
-      if (!rows.length) throw new Error('empty calendar');
-      return rows
-        .filter((e) => !e.country || MAJOR_ECON_COUNTRIES.includes(e.country))
-        .slice(0, 80)
-        .map((e) => ({
-          date: e.time ? e.time.split(' ')[0] : from,
-          time: e.time ? (e.time.split(' ')[1] || '--:--') : '--:--',
-          name: e.event,
-          impact: e.impact === 3 ? 'high' : e.impact === 2 ? 'medium' : 'low',
-          actual: e.actual != null ? String(e.actual) : '—',
-          forecast: e.estimate != null ? String(e.estimate) : '—',
-          prev: e.prev != null ? String(e.prev) : '—'
-        }))
+  async function getForexFactoryCalendar() {
+    return cached('ff-cal', 3600000, async () => {
+      const data = await fetchJSON('https://nfs.faireconomy.media/ff_calendar_thisweek.json');
+      if (!Array.isArray(data) || !data.length) throw new Error('empty calendar');
+      return data
+        .filter((e) => !e.country || MAJOR_FF_CURRENCIES.includes(e.country))
+        .map((e) => {
+          const d = new Date(e.date);
+          const valid = !isNaN(d.getTime());
+          const impactStr = (e.impact || '').toLowerCase();
+          return {
+            date: valid ? d.toISOString().slice(0, 10) : '',
+            time: valid ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : '--:--',
+            country: e.country || '',
+            name: e.title || 'Event',
+            impact: impactStr.includes('high') ? 'high' : impactStr.includes('med') ? 'medium' : 'low',
+            actual: e.actual || '—',
+            forecast: e.forecast || '—',
+            prev: e.previous || '—'
+          };
+        })
         .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
     });
   }
 
   global.LiveData = {
     getSettings, saveSettings,
-    getQuote, getHistory, getCOT, get13FMeta, getSocialVolume, getNews, getEconCalendar
+    getQuote, getHistory, getCOT, get13FMeta, getSocialVolume, getNews, getForexFactoryCalendar
   };
 })(window);
