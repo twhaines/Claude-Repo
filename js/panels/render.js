@@ -79,8 +79,7 @@
   // ---------- trading journal (shared between the entry form and the log) ----------
   const JOURNAL_KEY = 'vt-journal-trades';
   const FUTURES_MULTIPLIERS = {
-    'ES=F': 50, 'NQ=F': 20, 'CL=F': 1000, 'GC=F': 100, 'SI=F': 5000,
-    'ZC=F': 50, 'ZN=F': 1000, 'NG=F': 10000, '6E=F': 125000
+    'ES=F': 50, 'NQ=F': 20, 'YM=F': 5, 'CL=F': 1000, 'GC=F': 100, 'SI=F': 5000
   };
   function multiplierFor(ticker) { return FUTURES_MULTIPLIERS[ticker] || 1; }
   function tradePnL(t) {
@@ -175,7 +174,7 @@
     const wrap = h(`<div><table class="dtable"><thead><tr><th>Ticker</th><th>Last</th><th>Chg %</th></tr></thead><tbody id="qmBody"></tbody></table></div>`);
     body.appendChild(wrap);
     const tbody = wrap.querySelector('#qmBody');
-    const list = M.FUTURES.concat(M.STOCKS.slice(0, 8));
+    const list = M.ALL_SYMBOLS;
     let alive = true;
     async function paint() {
       const { results, anyLive } = await batchQuotes(list);
@@ -189,7 +188,7 @@
   }
 
   function renderOverview(body, ctx) {
-    const initial = ctx.config.ticker || 'AAPL';
+    const initial = ctx.config.ticker || 'ES=F';
     const wrap = h(`
       <div>
         <select id="ovSel" style="width:100%;padding:6px;margin-bottom:10px;">${tickerOptions(initial)}</select>
@@ -328,7 +327,7 @@
   }
 
   function renderCompareChart(body, ctx) {
-    const tA = ctx.config.a || 'AAPL', tB = ctx.config.b || 'MSFT';
+    const tA = ctx.config.a || 'ES=F', tB = ctx.config.b || 'NQ=F';
     const wrap = h(`
       <div style="display:flex;flex-direction:column;height:100%;">
         <div style="display:flex;gap:8px;margin-bottom:8px;flex-shrink:0;">
@@ -396,11 +395,11 @@
     body.appendChild(wrap);
     let alive = true;
     async function paint() {
-      const { results, anyLive } = await batchQuotes(M.STOCKS);
+      const { results, anyLive } = await batchQuotes(M.ALL_SYMBOLS);
       if (!alive) return;
       ctx.setBadge(anyLive ? 'live' : 'sim');
       const bySector = {};
-      M.STOCKS.forEach((s, i) => (bySector[s.sector] = bySector[s.sector] || []).push(results[i].chgPct));
+      M.ALL_SYMBOLS.forEach((s, i) => (bySector[s.sector] = bySector[s.sector] || []).push(results[i].chgPct));
       const rows = Object.entries(bySector).map(([sec, arr]) => ({ sec, avg: arr.reduce((a, b) => a + b, 0) / arr.length }));
       rows.sort((a, b) => b.avg - a.avg);
       const maxAbs = Math.max(...rows.map((r) => Math.abs(r.avg)), 1);
@@ -438,8 +437,8 @@
   }
 
   const COT_FRAGMENTS = {
-    'ES=F': 'S%26P 500', 'NQ=F': 'NASDAQ', 'CL=F': 'CRUDE OIL', 'GC=F': 'GOLD',
-    'SI=F': 'SILVER', 'ZC=F': 'CORN', 'ZN=F': 'TREASURY NOTES', 'NG=F': 'NATURAL GAS', '6E=F': 'EURO FX'
+    'ES=F': 'S%26P 500', 'NQ=F': 'NASDAQ', 'YM=F': 'DOW JONES', 'CL=F': 'CRUDE OIL', 'GC=F': 'GOLD',
+    'SI=F': 'SILVER'
   };
   function renderCOT(body, ctx) {
     const wrap = h(`<div id="cotList"></div>`);
@@ -520,7 +519,7 @@
   }
 
   function renderSeasonality(body, ctx) {
-    const initial = ctx.config.ticker || 'SPY';
+    const initial = ctx.config.ticker || 'ES=F';
     const wrap = h(`<div><select id="seSel" style="width:100%;padding:6px;margin-bottom:10px;">${tickerOptions(initial)}</select><canvas id="seCanvas" style="width:100%;height:170px;"></canvas></div>`);
     body.appendChild(wrap);
     const sel = wrap.querySelector('#seSel');
@@ -578,7 +577,7 @@
     body.appendChild(wrap);
     const rowsEl = wrap.querySelector('#ciRows');
     const canvas = wrap.querySelector('#ciCanvas');
-    let rows = ctx.config.rows || [{ t: 'AAPL', w: 40 }, { t: 'MSFT', w: 35 }, { t: 'NVDA', w: 25 }];
+    let rows = ctx.config.rows || [{ t: 'ES=F', w: 40 }, { t: 'GC=F', w: 35 }, { t: 'CL=F', w: 25 }];
     let alive = true;
     function paintRows() {
       rowsEl.innerHTML = '';

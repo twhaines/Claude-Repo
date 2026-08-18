@@ -10,40 +10,16 @@
     'Utilities', 'Communication'
   ];
 
-  const STOCKS = [
-    { t: 'AAPL', name: 'Apple Inc.', sector: 'Technology', base: 231.4 },
-    { t: 'MSFT', name: 'Microsoft Corp.', sector: 'Technology', base: 421.8 },
-    { t: 'NVDA', name: 'NVIDIA Corp.', sector: 'Technology', base: 138.2 },
-    { t: 'GOOGL', name: 'Alphabet Inc.', sector: 'Communication', base: 178.9 },
-    { t: 'AMZN', name: 'Amazon.com Inc.', sector: 'Consumer Disc.', base: 197.3 },
-    { t: 'META', name: 'Meta Platforms', sector: 'Communication', base: 587.1 },
-    { t: 'TSLA', name: 'Tesla Inc.', sector: 'Consumer Disc.', base: 251.6 },
-    { t: 'AVGO', name: 'Broadcom Inc.', sector: 'Technology', base: 172.4 },
-    { t: 'ORCL', name: 'Oracle Corp.', sector: 'Technology', base: 149.2 },
-    { t: 'AMD', name: 'Advanced Micro Devices', sector: 'Technology', base: 141.0 },
-    { t: 'INTC', name: 'Intel Corp.', sector: 'Technology', base: 23.7 },
-    { t: 'JPM', name: 'JPMorgan Chase', sector: 'Financials', base: 231.9 },
-    { t: 'XOM', name: 'Exxon Mobil', sector: 'Energy', base: 114.8 },
-    { t: 'DTE', name: 'DTE Energy Co.', sector: 'Utilities', base: 149.4 },
-    { t: 'SPY', name: 'SPDR S&P 500 ETF', sector: 'Financials', base: 583.2 },
-    { t: 'QQQ', name: 'Invesco QQQ ETF', sector: 'Technology', base: 505.6 },
-    { t: 'MU', name: 'Micron Technology', sector: 'Technology', base: 108.3 },
-    { t: 'GOOG', name: 'Alphabet Inc. Cl C', sector: 'Communication', base: 180.1 }
-  ];
-
   const FUTURES = [
     { t: 'ES=F', name: 'E-mini S&P 500', sector: 'Index', base: 5920.5 },
     { t: 'NQ=F', name: 'E-mini Nasdaq 100', sector: 'Index', base: 21340.0 },
+    { t: 'YM=F', name: 'E-mini Dow Jones', sector: 'Index', base: 43850.0 },
     { t: 'CL=F', name: 'WTI Crude Oil', sector: 'Energy', base: 68.4 },
     { t: 'GC=F', name: 'Gold', sector: 'Metals', base: 2645.3 },
-    { t: 'SI=F', name: 'Silver', sector: 'Metals', base: 30.9 },
-    { t: 'ZC=F', name: 'Corn', sector: 'Agriculture', base: 428.5 },
-    { t: 'ZN=F', name: '10-Year T-Note', sector: 'Rates', base: 110.7 },
-    { t: 'NG=F', name: 'Natural Gas', sector: 'Energy', base: 3.21 },
-    { t: '6E=F', name: 'Euro FX', sector: 'FX', base: 1.048 }
+    { t: 'SI=F', name: 'Silver', sector: 'Metals', base: 30.9 }
   ];
 
-  const ALL_SYMBOLS = STOCKS.concat(FUTURES);
+  const ALL_SYMBOLS = FUTURES;
 
   function seededRandom(seed) {
     let s = seed % 2147483647;
@@ -138,8 +114,8 @@
 
   function fundHoldings(fundName) {
     const rnd = seededRandom(hashStr(fundName));
-    const pool = ALL_SYMBOLS.filter((s) => !s.t.includes('=F'));
-    const n = 5 + Math.floor(rnd() * 3);
+    const pool = ALL_SYMBOLS;
+    const n = Math.min(pool.length, 5 + Math.floor(rnd() * 3));
     const picks = [];
     const used = new Set();
     while (picks.length < n) {
@@ -210,7 +186,7 @@
   ];
 
   global.MockData = {
-    SECTORS, STOCKS, FUTURES, ALL_SYMBOLS,
+    SECTORS, FUTURES, ALL_SYMBOLS,
     NEWS_HEADLINES, SOCIAL_VOLUME, FUNDS_13F, PREDICTION_MARKETS,
     getLive, tickAll, generateOHLC, seededRandom, hashStr, fundHoldings, weekDates, generateWeekEvents
   };

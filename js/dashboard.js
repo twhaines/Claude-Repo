@@ -8,7 +8,7 @@
   const FIXED_PANELS = [
     { containerId: 'panelChart', defId: 'chart', key: 'chart', defaultConfig: { ticker: 'ES=F', tf: '1h' } },
     { containerId: 'panelMood', defId: 'market-mood', key: 'market-mood' },
-    { containerId: 'panelSocial', defId: 'social-volume', key: 'social-volume' },
+    { containerId: 'panelSocial', defId: 'cot-positioning', key: 'cot-positioning' },
     { containerId: 'panelHeatmap', defId: 'heatmap', key: 'heatmap' },
     { containerId: 'panelNews', defId: 'live-news', key: 'live-news' },
     { containerId: 'panelCalendar', defId: 'economic-calendar', key: 'economic-calendar' },
