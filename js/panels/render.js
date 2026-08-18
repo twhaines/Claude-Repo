@@ -661,6 +661,29 @@
     return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   }
 
+  const ECON_EVENT_LINKS = [
+    [/core cpi|inflation/i, 'https://tradingeconomics.com/united-states/inflation-cpi'],
+    [/ppi|producer price/i, 'https://tradingeconomics.com/united-states/producer-prices-change'],
+    [/nonfarm payrolls|non-farm payrolls/i, 'https://tradingeconomics.com/united-states/non-farm-payrolls'],
+    [/unemployment rate/i, 'https://tradingeconomics.com/united-states/unemployment-rate'],
+    [/initial jobless claims|jobless claims/i, 'https://tradingeconomics.com/united-states/jobless-claims'],
+    [/fomc|rate decision|fed speaker/i, 'https://tradingeconomics.com/united-states/interest-rate'],
+    [/ism manufacturing/i, 'https://tradingeconomics.com/united-states/ism-manufacturing-pmi'],
+    [/services pmi/i, 'https://tradingeconomics.com/united-states/services-pmi'],
+    [/adp employment/i, 'https://tradingeconomics.com/united-states/adp-employment-change'],
+    [/jolts|job openings/i, 'https://tradingeconomics.com/united-states/job-offers'],
+    [/trade balance/i, 'https://tradingeconomics.com/united-states/balance-of-trade'],
+    [/crude inventories|crude oil stocks/i, 'https://tradingeconomics.com/united-states/crude-oil-stocks-change'],
+    [/michigan consumer sentiment/i, 'https://tradingeconomics.com/united-states/michigan-consumer-sentiment'],
+    [/gdp/i, 'https://tradingeconomics.com/united-states/gdp-growth'],
+    [/retail sales/i, 'https://tradingeconomics.com/united-states/retail-sales'],
+    [/pce|personal spending/i, 'https://tradingeconomics.com/united-states/personal-spending']
+  ];
+  function econEventUrl(name) {
+    const match = ECON_EVENT_LINKS.find(([re]) => re.test(name));
+    return match ? match[1] : 'https://www.google.com/search?q=' + encodeURIComponent(name + ' economic indicator explained');
+  }
+
   function renderEconCalendar(body, ctx) {
     const wrap = h(`<table class="dtable"><thead><tr><th>Day</th><th>Time</th><th>Event</th><th>Actual</th><th>Fcst</th><th>Prev</th></tr></thead><tbody></tbody></table>`);
     body.appendChild(wrap);
@@ -684,7 +707,7 @@
         return `<tr>
           <td style="color:var(--text-dim);white-space:nowrap;">${showDay ? dayLabel(e.date) : ''}</td>
           <td>${e.time}</td>
-          <td>${impactDot(e.impact)}${e.name}</td>
+          <td>${impactDot(e.impact)}<a href="${econEventUrl(e.name)}" target="_blank" rel="noopener" class="news-link" style="color:inherit;">${e.name}</a></td>
           <td>${e.actual}</td><td>${e.forecast}</td><td>${e.prev}</td>
         </tr>`;
       }).join('');
