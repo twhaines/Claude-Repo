@@ -625,16 +625,17 @@
     body.appendChild(wrap);
     let alive = true;
     async function paint() {
-      let items, live = true;
+      let items, live = true, reason = '';
       try {
         items = await LD.getNews();
         if (!items.length) throw new Error('empty');
       } catch (e) {
         items = M.NEWS_HEADLINES;
         live = false;
+        reason = e.message;
       }
       if (!alive) return;
-      ctx.setBadge(live ? 'live' : 'sim');
+      ctx.setBadge(live ? 'live' : 'sim', reason);
       wrap.innerHTML = items.slice(0, 24).map((n) => {
         const url = n.url || 'https://news.google.com/search?q=' + encodeURIComponent(n.text);
         return `
@@ -654,22 +655,39 @@
     return `<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};margin-right:5px;"></span>`;
   }
 
+  function dayLabel(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr + 'T00:00:00');
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
   function renderEconCalendar(body, ctx) {
-    const wrap = h(`<table class="dtable"><thead><tr><th>Time</th><th>Event</th><th>Actual</th><th>Fcst</th><th>Prev</th></tr></thead><tbody></tbody></table>`);
+    const wrap = h(`<table class="dtable"><thead><tr><th>Day</th><th>Time</th><th>Event</th><th>Actual</th><th>Fcst</th><th>Prev</th></tr></thead><tbody></tbody></table>`);
     body.appendChild(wrap);
     let alive = true;
     async function paint() {
-      let rows, live = true;
+      let rows, live = true, reason = '';
       try {
         rows = await LD.getEconCalendar();
         if (!rows.length) throw new Error('empty');
       } catch (e) {
-        rows = M.ECON_EVENTS; live = false;
+        rows = M.generateWeekEvents();
+        live = false;
+        reason = e.message;
       }
       if (!alive) return;
-      ctx.setBadge(live ? 'live' : 'sim');
-      wrap.querySelector('tbody').innerHTML = rows.map((e) => `
-        <tr><td>${e.time}</td><td>${impactDot(e.impact)}${e.name}</td><td>${e.actual}</td><td>${e.forecast}</td><td>${e.prev}</td></tr>`).join('');
+      ctx.setBadge(live ? 'live' : 'sim', reason);
+      let lastDate = null;
+      wrap.querySelector('tbody').innerHTML = rows.map((e) => {
+        const showDay = e.date !== lastDate;
+        lastDate = e.date;
+        return `<tr>
+          <td style="color:var(--text-dim);white-space:nowrap;">${showDay ? dayLabel(e.date) : ''}</td>
+          <td>${e.time}</td>
+          <td>${impactDot(e.impact)}${e.name}</td>
+          <td>${e.actual}</td><td>${e.forecast}</td><td>${e.prev}</td>
+        </tr>`;
+      }).join('');
     }
     paint();
     const iv = setInterval(paint, 3600000);
