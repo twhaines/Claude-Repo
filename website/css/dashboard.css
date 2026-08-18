@@ -25,7 +25,7 @@ html, body { height: 100%; overflow: hidden; }
 
 .data-badge { font-size: 9px; letter-spacing: 0.06em; padding: 1px 5px; border-radius: 2px; margin-left: 6px; }
 .data-badge.live { color: var(--green); border: 1px solid var(--green-dim); }
-.data-badge.sim { color: var(--text-dim); border: 1px solid var(--panel-border-bright); }
+.data-badge.sim { color: var(--text-dim); border: 1px solid var(--panel-border-bright); cursor: help; }
 
 /* Tab bar */
 .tabbar {

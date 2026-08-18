@@ -54,10 +54,11 @@
         savePanelConfigs();
         window.dispatchEvent(new CustomEvent('vt-panel-config-changed', { detail: { key: spec.key } }));
       },
-      setBadge(status) {
+      setBadge(status, reason) {
         if (!status) { badgeEl.style.display = 'none'; return; }
         badgeEl.style.display = '';
         badgeEl.textContent = status.toUpperCase();
+        badgeEl.title = status === 'sim' && reason ? 'Simulated because: ' + reason : '';
         badgeEl.className = 'data-badge ' + (status === 'live' ? 'live' : 'sim');
       }
     };
