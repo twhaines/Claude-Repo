@@ -21,6 +21,32 @@
 
   const ALL_SYMBOLS = FUTURES;
 
+  // Curated geopolitical risk zones for the Globe tab. This is reference
+  // data (persistent flashpoints/sanctions regimes), not a live feed — no
+  // free API publishes conflict/sanctions events in real time. Each entry
+  // ties back to the instruments it actually moves.
+  const CONFLICT_ZONES = [
+    { name: 'Strait of Hormuz', lat: 26.6, lon: 56.3, severity: 'high', note: 'Iran–US tensions; roughly a fifth of global oil transits this chokepoint.', affects: ['CL=F', 'GC=F'] },
+    { name: 'Russia–Ukraine Front', lat: 48.5, lon: 37.9, severity: 'high', note: 'Active war; grain-corridor and energy-infrastructure disruption risk.', affects: ['GC=F', 'CL=F'] },
+    { name: 'Red Sea / Bab-el-Mandeb', lat: 12.6, lon: 43.4, severity: 'high', note: 'Houthi attacks on shipping; Suez-alternative reroutes raise freight and insurance costs.', affects: ['CL=F'] },
+    { name: 'South China Sea', lat: 12.0, lon: 114.0, severity: 'medium', note: 'Territorial disputes along a primary Asia-bound energy and goods shipping lane.', affects: ['CL=F', 'NQ=F'] },
+    { name: 'Taiwan Strait', lat: 24.5, lon: 119.5, severity: 'medium', note: 'China–Taiwan tension; semiconductor supply-chain risk feeds Nasdaq volatility.', affects: ['NQ=F'] }
+  ];
+
+  const SANCTIONS_ZONES = [
+    { name: 'Russia', lat: 61.5, lon: 105.3, severity: 'high', note: 'G7/EU sanctions on energy exports reroute crude flows and swing the Urals discount.', affects: ['CL=F', 'GC=F'] },
+    { name: 'Iran', lat: 32.4, lon: 53.7, severity: 'high', note: 'US sanctions on oil exports; enforcement changes tighten or loosen global supply.', affects: ['CL=F'] },
+    { name: 'Venezuela', lat: 6.4, lon: -66.6, severity: 'medium', note: 'US sanctions on PDVSA; heavy-crude supply swings with licensing changes.', affects: ['CL=F'] },
+    { name: 'North Korea', lat: 40.3, lon: 127.5, severity: 'low', note: 'Limited direct commodity exposure; occasional regional risk-off flows into gold.', affects: ['GC=F'] }
+  ];
+
+  const CHOKEPOINTS = [
+    { name: 'Strait of Malacca', lat: 2.8, lon: 101.0, note: 'Busiest oil shipping lane; about a quarter of global seaborne crude passes here.', affects: ['CL=F'] },
+    { name: 'Suez Canal', lat: 30.5, lon: 32.3, note: 'Connects the Red Sea to the Mediterranean; roughly a tenth of world trade transits here.', affects: ['CL=F'] },
+    { name: 'Panama Canal', lat: 9.1, lon: -79.7, note: 'Drought-driven draft restrictions have periodically slowed crude and LNG transit.', affects: ['CL=F'] },
+    { name: 'Danish Straits', lat: 55.7, lon: 12.6, note: 'Baltic oil-export route; sanctions-linked "shadow fleet" tanker risk.', affects: ['CL=F'] }
+  ];
+
   function seededRandom(seed) {
     let s = seed % 2147483647;
     if (s <= 0) s += 2147483646;
@@ -187,6 +213,7 @@
 
   global.MockData = {
     SECTORS, FUTURES, ALL_SYMBOLS,
+    CONFLICT_ZONES, SANCTIONS_ZONES, CHOKEPOINTS,
     NEWS_HEADLINES, SOCIAL_VOLUME, FUNDS_13F, PREDICTION_MARKETS,
     getLive, tickAll, generateOHLC, seededRandom, hashStr, fundHoldings, weekDates, generateWeekEvents
   };

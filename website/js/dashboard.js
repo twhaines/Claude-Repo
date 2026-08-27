@@ -12,6 +12,8 @@
     { containerId: 'panelHeatmap', defId: 'heatmap', key: 'heatmap' },
     { containerId: 'panelNews', defId: 'live-news', key: 'live-news' },
     { containerId: 'panelCalendar', defId: 'economic-calendar', key: 'economic-calendar' },
+    { containerId: 'panelGlobeMap', defId: 'globe-map', key: 'globe-map' },
+    { containerId: 'panelGlobeFeed', defId: 'globe-feed', key: 'globe-feed' },
     { containerId: 'panelTradeEntry', defId: 'trade-entry', key: 'trade-entry' },
     { containerId: 'panelTradeLog', defId: 'trade-log', key: 'trade-log' }
   ];
@@ -75,6 +77,7 @@
   const boards = {
     markets: document.getElementById('boardMarkets'),
     news: document.getElementById('boardNews'),
+    globe: document.getElementById('boardGlobe'),
     journal: document.getElementById('boardJournal')
   };
   document.querySelectorAll('.tab').forEach((tabEl) => {

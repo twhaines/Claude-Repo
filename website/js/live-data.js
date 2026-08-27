@@ -168,8 +168,30 @@
     });
   }
 
+  // ---------- USGS earthquakes, no key (Globe tab, natural-disaster layer) ----------
+  async function getEarthquakes() {
+    return cached('usgs-quakes', 10 * 60000, async () => {
+      const data = await fetchJSON('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson');
+      const feats = data.features || [];
+      if (!feats.length) throw new Error('no quakes');
+      return feats
+        .map((f) => ({
+          id: f.id,
+          name: f.properties.place || 'Unknown location',
+          mag: f.properties.mag,
+          time: f.properties.time,
+          url: f.properties.url,
+          lon: f.geometry.coordinates[0],
+          lat: f.geometry.coordinates[1]
+        }))
+        .filter((q) => q.mag != null)
+        .sort((a, b) => b.mag - a.mag);
+    });
+  }
+
   global.LiveData = {
     getSettings, saveSettings,
-    getQuote, getHistory, getCOT, get13FMeta, getSocialVolume, getNews, getForexFactoryCalendar
+    getQuote, getHistory, getCOT, get13FMeta, getSocialVolume, getNews, getForexFactoryCalendar,
+    getEarthquakes
   };
 })(window);

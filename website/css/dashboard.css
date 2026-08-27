@@ -76,6 +76,11 @@ html, body { height: 100%; overflow: hidden; }
   grid-template-rows: 1fr;
   grid-template-areas: "entry log";
 }
+.dash-grid--globe {
+  grid-template-columns: 2.6fr 1fr;
+  grid-template-rows: 1fr;
+  grid-template-areas: "globemap globefeed";
+}
 .area-chart { grid-area: chart; }
 .area-mood { grid-area: mood; }
 .area-social { grid-area: social; }
@@ -84,6 +89,8 @@ html, body { height: 100%; overflow: hidden; }
 .area-calendar { grid-area: calendar; }
 .area-entry { grid-area: entry; }
 .area-log { grid-area: log; }
+.area-globemap { grid-area: globemap; }
+.area-globefeed { grid-area: globefeed; }
 
 @media (max-width: 900px) {
   .dash-grid { display: flex; flex-direction: column; min-height: 0; }
@@ -114,6 +121,64 @@ html, body { height: 100%; overflow: hidden; }
 
 .news-link:hover { color: var(--accent); }
 .news-link:hover > div:first-child { color: var(--accent-dim); }
+
+/* Globe tab: Leaflet map dark-theme overrides + risk layer UI */
+.leaflet-container { background: var(--bg); font: inherit; }
+.leaflet-control-zoom a { background: var(--panel-bg-alt) !important; color: var(--text-primary) !important; border-color: var(--panel-border) !important; }
+.leaflet-control-zoom a:hover { color: var(--accent) !important; }
+.leaflet-control-attribution { background: rgba(8, 9, 11, 0.75) !important; color: var(--text-dim) !important; font-size: 9px !important; }
+.leaflet-control-attribution a { color: var(--text-secondary) !important; }
+.leaflet-popup-content-wrapper { background: var(--panel-bg); color: var(--text-primary); border: 1px solid var(--panel-border-bright); border-radius: 3px; }
+.leaflet-popup-tip { background: var(--panel-bg); }
+.leaflet-popup-close-button { color: var(--text-dim) !important; }
+
+.globe-layers {
+  position: absolute;
+  top: 10px; left: 44px;
+  z-index: 1000;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  max-width: calc(100% - 60px);
+}
+.globe-chip {
+  background: var(--panel-bg-alt);
+  border: 1px solid var(--panel-border);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.globe-chip.active { color: var(--accent); border-color: var(--accent-dim); }
+
+.globe-legend {
+  position: absolute;
+  bottom: 10px; left: 10px;
+  z-index: 1000;
+  background: rgba(8, 9, 11, 0.8);
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  pointer-events: none;
+}
+.globe-legend__dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+.vt-risk-marker span { display: block; width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.4); }
+.vt-risk-marker--pulse span { animation: vt-pulse 1.8s ease-out infinite; }
+@keyframes vt-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(255, 77, 79, 0.55); }
+  100% { box-shadow: 0 0 0 10px rgba(255, 77, 79, 0); }
+}
+
+.globe-feed-row { padding: 8px 0; border-bottom: 1px solid var(--hairline); cursor: pointer; }
+.globe-feed-row:hover { background: var(--accent-wash); }
 
 /* generic tables inside panels */
 .dtable { width: 100%; border-collapse: collapse; font-size: 12px; }
