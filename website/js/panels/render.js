@@ -734,13 +734,9 @@
       ${affectsHtml(affects)}
     </div>`;
   }
-  function riskDivIcon(color, pulse) {
-    return L.divIcon({
-      className: 'vt-risk-marker' + (pulse ? ' vt-risk-marker--pulse' : ''),
-      html: `<span style="background:${color}"></span>`,
-      iconSize: [12, 12]
-    });
-  }
+  const GLOBE_STYLE_URL = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+  const LAYER_KEYS = ['conflict', 'sanctions', 'chokepoints', 'weather', 'quakes'];
+  const LAYER_LABELS = { conflict: 'Conflict Zones', sanctions: 'Sanctions', chokepoints: 'Chokepoints', weather: 'Weather Alerts', quakes: 'Quakes M2.5+' };
 
   function renderGlobeMap(body, ctx) {
     body.classList.add('no-pad');
@@ -749,8 +745,8 @@
         <div id="globeMapEl" style="position:absolute;inset:0;"></div>
         <div class="globe-layers" id="globeLayerToggles"></div>
         <div class="globe-legend">
-          <div><span class="globe-legend__dot" style="background:${SEVERITY_COLOR.high}"></span>Conflict / Sanctions — high</div>
-          <div><span class="globe-legend__dot" style="background:${SEVERITY_COLOR.medium}"></span>medium</div>
+          <div><span class="globe-legend__dot" style="background:${SEVERITY_COLOR.high}"></span>Conflict / Sanctions / Extreme weather</div>
+          <div><span class="globe-legend__dot" style="background:${SEVERITY_COLOR.medium}"></span>Medium severity</div>
           <div><span class="globe-legend__dot" style="background:#4d9fff"></span>Chokepoint (reference)</div>
           <div><span class="globe-legend__dot" style="background:#ffd166"></span>Earthquake M2.5+ (live)</div>
         </div>
@@ -759,76 +755,120 @@
     const mapEl = wrap.querySelector('#globeMapEl');
     const toggleEl = wrap.querySelector('#globeLayerToggles');
 
-    const map = L.map(mapEl, { worldCopyJump: true, minZoom: 2, maxZoom: 8 }).setView([20, 15], 2);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-      subdomains: 'abcd', maxZoom: 19
-    }).addTo(map);
-
-    const layerGroups = {
-      conflict: L.layerGroup(), sanctions: L.layerGroup(), chokepoints: L.layerGroup(), quakes: L.layerGroup()
-    };
-    M.CONFLICT_ZONES.forEach((z) => {
-      L.marker([z.lat, z.lon], { icon: riskDivIcon(SEVERITY_COLOR[z.severity], z.severity === 'high') })
-        .bindPopup(globePopupHtml(z.name, severityBadgeHtml(z.severity), z.note, z.affects))
-        .addTo(layerGroups.conflict);
+    const map = new maplibregl.Map({
+      container: mapEl, style: GLOBE_STYLE_URL,
+      center: [15, 20], zoom: 1.4, minZoom: 1, maxZoom: 8, attributionControl: false
     });
-    M.SANCTIONS_ZONES.forEach((z) => {
-      L.marker([z.lat, z.lon], { icon: riskDivIcon(SEVERITY_COLOR[z.severity], false) })
-        .bindPopup(globePopupHtml(z.name + ' — sanctions', severityBadgeHtml(z.severity), z.note, z.affects))
-        .addTo(layerGroups.sanctions);
-    });
-    M.CHOKEPOINTS.forEach((z) => {
-      L.marker([z.lat, z.lon], { icon: riskDivIcon('#4d9fff', false) })
-        .bindPopup(globePopupHtml(z.name, '<span class="pill">CHOKEPOINT</span>', z.note, z.affects))
-        .addTo(layerGroups.chokepoints);
-    });
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
-    const LAYER_DEFS = [
-      { key: 'conflict', label: 'Conflict Zones', group: layerGroups.conflict },
-      { key: 'sanctions', label: 'Sanctions', group: layerGroups.sanctions },
-      { key: 'chokepoints', label: 'Chokepoints', group: layerGroups.chokepoints },
-      { key: 'quakes', label: 'Quakes M2.5+', group: layerGroups.quakes }
-    ];
-    const enabled = ctx.config.layers || LAYER_DEFS.map((l) => l.key);
-    LAYER_DEFS.forEach((l) => { if (enabled.includes(l.key)) l.group.addTo(map); });
+    const markersByGroup = { conflict: [], sanctions: [], chokepoints: [], weather: [], quakes: [] };
+    const enabled = new Set(ctx.config.layers || LAYER_KEYS);
 
-    toggleEl.innerHTML = LAYER_DEFS.map((l) => `<button class="globe-chip ${enabled.includes(l.key) ? 'active' : ''}" data-layer="${l.key}">${l.label}</button>`).join('');
+    function addMarker(group, lat, lon, color, pulse, popupHtml) {
+      const el = document.createElement('div');
+      el.className = 'vt-risk-marker' + (pulse ? ' vt-risk-marker--pulse' : '');
+      el.innerHTML = `<span style="background:${color}"></span>`;
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([lon, lat])
+        .setPopup(new maplibregl.Popup({ offset: 14, closeButton: true }).setHTML(popupHtml));
+      markersByGroup[group].push(marker);
+      return marker;
+    }
+    function applyVisibility(key) {
+      const on = enabled.has(key);
+      markersByGroup[key].forEach((m) => { if (on) m.addTo(map); else m.remove(); });
+    }
+
+    M.CONFLICT_ZONES.forEach((z) => addMarker('conflict', z.lat, z.lon, SEVERITY_COLOR[z.severity], z.severity === 'high',
+      globePopupHtml(z.name, severityBadgeHtml(z.severity), z.note, z.affects)));
+    M.CHOKEPOINTS.forEach((z) => addMarker('chokepoints', z.lat, z.lon, '#4d9fff', false,
+      globePopupHtml(z.name, '<span class="pill">CHOKEPOINT</span>', z.note, z.affects)));
+
+    function rebuildSanctionsMarkers(counts) {
+      markersByGroup.sanctions.forEach((m) => m.remove());
+      markersByGroup.sanctions = [];
+      M.SANCTIONS_ZONES.forEach((z) => {
+        const count = counts && counts[z.name];
+        const liveBadge = count ? ' <span class="pill" style="color:var(--green);border-color:var(--green-dim)">LIVE</span>' : '';
+        const note = count ? `${z.note} <b>${count.toLocaleString()}</b> OFAC-listed entities currently under related sanctions programs.` : z.note;
+        addMarker('sanctions', z.lat, z.lon, SEVERITY_COLOR[z.severity], false,
+          globePopupHtml(z.name + ' — sanctions', severityBadgeHtml(z.severity) + liveBadge, note, z.affects));
+      });
+      applyVisibility('sanctions');
+    }
+    rebuildSanctionsMarkers(null);
+    LAYER_KEYS.forEach(applyVisibility);
+
+    toggleEl.innerHTML = LAYER_KEYS.map((k) => `<button class="globe-chip ${enabled.has(k) ? 'active' : ''}" data-layer="${k}">${LAYER_LABELS[k]}</button>`).join('');
     toggleEl.querySelectorAll('[data-layer]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const def = LAYER_DEFS.find((l) => l.key === btn.dataset.layer);
-        if (map.hasLayer(def.group)) { map.removeLayer(def.group); btn.classList.remove('active'); }
-        else { def.group.addTo(map); btn.classList.add('active'); }
-        ctx.setConfig({ layers: LAYER_DEFS.filter((l) => map.hasLayer(l.group)).map((l) => l.key) });
+        const key = btn.dataset.layer;
+        if (enabled.has(key)) enabled.delete(key); else enabled.add(key);
+        btn.classList.toggle('active');
+        applyVisibility(key);
+        ctx.setConfig({ layers: Array.from(enabled) });
       });
     });
 
     function onFocus(e) {
       if (!e.detail) return;
-      map.flyTo([e.detail.lat, e.detail.lon], Math.max(map.getZoom(), 4), { duration: 0.8 });
+      map.flyTo({ center: [e.detail.lon, e.detail.lat], zoom: Math.max(map.getZoom(), 4), duration: 800 });
     }
     window.addEventListener('vt-globe-focus', onFocus);
+
+    const liveStatus = { quakes: null, sanctions: null, weather: null };
+    function updateBadge() {
+      const values = Object.values(liveStatus);
+      if (values.some((v) => v === null)) return;
+      if (values.some((v) => v === true)) { ctx.setBadge('live'); return; }
+      const reasons = Object.entries(liveStatus).map(([k, v]) => `${k}: ${v}`).join('; ');
+      ctx.setBadge('sim', reasons + ' — conflict/chokepoints are curated reference data, not a live feed');
+    }
 
     async function loadQuakes() {
       try {
         const quakes = await LD.getEarthquakes();
-        layerGroups.quakes.clearLayers();
+        markersByGroup.quakes.forEach((m) => m.remove());
+        markersByGroup.quakes = [];
         quakes.slice(0, 60).forEach((q) => {
-          L.circleMarker([q.lat, q.lon], {
-            radius: Math.max(4, q.mag * 2.2), color: '#ffd166', weight: 1, fillColor: '#ffd166', fillOpacity: 0.35
-          }).bindPopup(globePopupHtml(`M${q.mag.toFixed(1)} — ${q.name}`,
-            '<span class="pill" style="color:var(--green);border-color:var(--green-dim)">LIVE</span>',
-            `Detected ${new Date(q.time).toLocaleString()} · <a href="${q.url}" target="_blank" rel="noopener" style="color:var(--accent)">USGS report</a>`, [])).addTo(layerGroups.quakes);
+          addMarker('quakes', q.lat, q.lon, '#ffd166', false,
+            globePopupHtml(`M${q.mag.toFixed(1)} — ${q.name}`,
+              '<span class="pill" style="color:var(--green);border-color:var(--green-dim)">LIVE</span>',
+              `Detected ${new Date(q.time).toLocaleString()} · <a href="${q.url}" target="_blank" rel="noopener" style="color:var(--accent)">USGS report</a>`, []));
         });
-        ctx.setBadge('live');
-      } catch (e) {
-        ctx.setBadge('sim', 'Earthquake layer: ' + e.message + ' — conflict/sanctions/chokepoints are curated reference data, not a live feed');
-      }
+        applyVisibility('quakes');
+        liveStatus.quakes = true;
+      } catch (e) { liveStatus.quakes = e.message; }
+      updateBadge();
     }
-    loadQuakes();
-    const iv = setInterval(loadQuakes, 10 * 60000);
+    async function loadSanctions() {
+      try {
+        const counts = await LD.getSanctionsData();
+        rebuildSanctionsMarkers(counts);
+        liveStatus.sanctions = true;
+      } catch (e) { liveStatus.sanctions = e.message; }
+      updateBadge();
+    }
+    async function loadWeather() {
+      try {
+        const alerts = await LD.getWeatherAlerts();
+        markersByGroup.weather.forEach((m) => m.remove());
+        markersByGroup.weather = [];
+        alerts.slice(0, 40).forEach((a) => {
+          const color = a.severity === 'Extreme' ? SEVERITY_COLOR.high : SEVERITY_COLOR.medium;
+          addMarker('weather', a.lat, a.lon, color, a.severity === 'Extreme',
+            globePopupHtml(a.event, '<span class="pill" style="color:var(--green);border-color:var(--green-dim)">LIVE</span>', `${a.headline} — ${a.areaDesc}`, ['CL=F']));
+        });
+        applyVisibility('weather');
+        liveStatus.weather = true;
+      } catch (e) { liveStatus.weather = e.message; }
+      updateBadge();
+    }
+    loadQuakes(); loadSanctions(); loadWeather();
+    const iv = setInterval(() => { loadQuakes(); loadSanctions(); loadWeather(); }, 10 * 60000);
 
-    const ro = new ResizeObserver(() => map.invalidateSize());
+    const ro = new ResizeObserver(() => map.resize());
     ro.observe(body);
 
     return () => { clearInterval(iv); ro.disconnect(); window.removeEventListener('vt-globe-focus', onFocus); map.remove(); };
@@ -853,21 +893,38 @@
     }
 
     async function paint() {
-      const staticItems = [
-        ...M.CONFLICT_ZONES.map((z) => ({ name: z.name, lat: z.lat, lon: z.lon, note: z.note, affects: z.affects, tag: 'CONFLICT · ' + z.severity.toUpperCase(), color: SEVERITY_COLOR[z.severity], rank: severityRank(z.severity) + 10 })),
-        ...M.SANCTIONS_ZONES.map((z) => ({ name: z.name, lat: z.lat, lon: z.lon, note: z.note, affects: z.affects, tag: 'SANCTIONS · ' + z.severity.toUpperCase(), color: SEVERITY_COLOR[z.severity], rank: severityRank(z.severity) + 5 })),
-        ...M.CHOKEPOINTS.map((z) => ({ name: z.name, lat: z.lat, lon: z.lon, note: z.note, affects: z.affects, tag: 'CHOKEPOINT', color: '#4d9fff', rank: 1 }))
-      ];
-      let quakeItems = [];
-      let live = true;
-      let reason;
-      try {
-        const quakes = await LD.getEarthquakes();
-        quakeItems = quakes.slice(0, 10).map((q) => ({ name: q.name, lat: q.lat, lon: q.lon, note: `M${q.mag.toFixed(1)} earthquake · ${new Date(q.time).toLocaleString()}`, affects: [], tag: 'QUAKE', color: '#ffd166', rank: q.mag }));
-      } catch (e) { live = false; reason = e.message; }
+      const [sanctionsResult, weatherResult, quakeResult] = await Promise.allSettled([
+        LD.getSanctionsData(), LD.getWeatherAlerts(), LD.getEarthquakes()
+      ]);
+      const sanctionsCounts = sanctionsResult.status === 'fulfilled' ? sanctionsResult.value : null;
+
+      const conflictItems = M.CONFLICT_ZONES.map((z) => ({ name: z.name, lat: z.lat, lon: z.lon, note: z.note, affects: z.affects, tag: 'CONFLICT · ' + z.severity.toUpperCase(), color: SEVERITY_COLOR[z.severity], rank: severityRank(z.severity) + 10 }));
+      const sanctionsItems = M.SANCTIONS_ZONES.map((z) => {
+        const count = sanctionsCounts && sanctionsCounts[z.name];
+        return {
+          name: z.name, lat: z.lat, lon: z.lon,
+          note: count ? `${z.note} ${count.toLocaleString()} OFAC-listed entities (live).` : z.note,
+          affects: z.affects, tag: 'SANCTIONS · ' + z.severity.toUpperCase() + (count ? ' · LIVE' : ''),
+          color: SEVERITY_COLOR[z.severity], rank: severityRank(z.severity) + 5
+        };
+      });
+      const chokepointItems = M.CHOKEPOINTS.map((z) => ({ name: z.name, lat: z.lat, lon: z.lon, note: z.note, affects: z.affects, tag: 'CHOKEPOINT', color: '#4d9fff', rank: 1 }));
+
+      const weatherItems = weatherResult.status === 'fulfilled'
+        ? weatherResult.value.map((a) => ({
+          name: a.event + ' — ' + (a.areaDesc || '').split(';')[0], lat: a.lat, lon: a.lon, note: a.headline, affects: ['CL=F'],
+          tag: 'WEATHER · ' + a.severity.toUpperCase(), color: a.severity === 'Extreme' ? SEVERITY_COLOR.high : SEVERITY_COLOR.medium,
+          rank: a.severity === 'Extreme' ? 8 : 6
+        }))
+        : [];
+      const quakeItems = quakeResult.status === 'fulfilled'
+        ? quakeResult.value.slice(0, 10).map((q) => ({ name: q.name, lat: q.lat, lon: q.lon, note: `M${q.mag.toFixed(1)} earthquake · ${new Date(q.time).toLocaleString()}`, affects: [], tag: 'QUAKE', color: '#ffd166', rank: q.mag }))
+        : [];
+
       if (!alive) return;
-      ctx.setBadge(live ? 'live' : 'sim', reason);
-      const all = staticItems.concat(quakeItems).sort((a, b) => b.rank - a.rank);
+      const anyLive = [sanctionsResult, weatherResult, quakeResult].some((r) => r.status === 'fulfilled');
+      ctx.setBadge(anyLive ? 'live' : 'sim', anyLive ? undefined : 'Sanctions/weather/quake feeds unreachable');
+      const all = conflictItems.concat(sanctionsItems, chokepointItems, weatherItems, quakeItems).sort((a, b) => b.rank - a.rank);
       wrap.innerHTML = all.map(row).join('');
       wrap.querySelectorAll('.globe-feed-row').forEach((el) => {
         el.addEventListener('click', () => {
@@ -1152,7 +1209,7 @@
     { id: 'custom-index', code: 'CI', category: 'Markets', title: 'Custom Index', desc: 'Weighted basket', size: 'md', render: renderCustomIndex },
     { id: 'live-news', code: 'LN', category: 'News', title: 'Live News', desc: 'Wire headlines', size: 'md', render: renderLiveNews },
     { id: 'economic-calendar', code: 'EC', category: 'News', title: 'Economic Calendar', desc: 'Macro data drops', size: 'md', render: renderEconCalendar },
-    { id: 'globe-map', code: 'GM', category: 'Globe', title: 'Global Risk Map', desc: 'Conflict, sanctions, chokepoints, quakes', size: 'lg', render: renderGlobeMap },
+    { id: 'globe-map', code: 'GM', category: 'Globe', title: 'Global Risk Map', desc: 'Conflict, sanctions, chokepoints, weather, quakes', size: 'lg', render: renderGlobeMap },
     { id: 'globe-feed', code: 'GF', category: 'Globe', title: 'Risk Feed', desc: 'Tap a row to focus the map', size: 'md', render: renderGlobeFeed },
     { id: 'whales-13f', code: 'WH', category: 'Community', title: '13F Whales', desc: 'Institutional filings', size: 'lg', render: render13F },
     { id: 'risk-calculator', code: 'RC', category: 'Community', title: 'Risk Calculator', desc: 'Position sizing', size: 'sm', render: renderRiskCalc },
