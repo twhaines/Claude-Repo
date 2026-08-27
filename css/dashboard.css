@@ -122,24 +122,27 @@ html, body { height: 100%; overflow: hidden; }
 .news-link:hover { color: var(--accent); }
 .news-link:hover > div:first-child { color: var(--accent-dim); }
 
-/* Globe tab: Leaflet map dark-theme overrides + risk layer UI */
-.leaflet-container { background: var(--bg); font: inherit; }
-.leaflet-control-zoom a { background: var(--panel-bg-alt) !important; color: var(--text-primary) !important; border-color: var(--panel-border) !important; }
-.leaflet-control-zoom a:hover { color: var(--accent) !important; }
-.leaflet-control-attribution { background: rgba(8, 9, 11, 0.75) !important; color: var(--text-dim) !important; font-size: 9px !important; }
-.leaflet-control-attribution a { color: var(--text-secondary) !important; }
-.leaflet-popup-content-wrapper { background: var(--panel-bg); color: var(--text-primary); border: 1px solid var(--panel-border-bright); border-radius: 3px; }
-.leaflet-popup-tip { background: var(--panel-bg); }
-.leaflet-popup-close-button { color: var(--text-dim) !important; }
+/* Globe tab: MapLibre GL map dark-theme overrides + risk layer UI */
+.maplibregl-map { font: inherit; }
+.maplibregl-ctrl-group { background: var(--panel-bg-alt) !important; border: 1px solid var(--panel-border) !important; box-shadow: none !important; }
+.maplibregl-ctrl-group button { background: transparent !important; }
+.maplibregl-ctrl-group button:hover { background: var(--accent-wash) !important; }
+.maplibregl-ctrl-icon { filter: invert(0.9); }
+.maplibregl-ctrl-attrib { background: rgba(8, 9, 11, 0.75) !important; color: var(--text-dim) !important; font-size: 9px !important; }
+.maplibregl-ctrl-attrib a { color: var(--text-secondary) !important; }
+.maplibregl-popup-content { background: var(--panel-bg); color: var(--text-primary); border: 1px solid var(--panel-border-bright); border-radius: 3px; padding: 10px 12px; }
+.maplibregl-popup-tip { border-top-color: var(--panel-bg) !important; border-bottom-color: var(--panel-bg) !important; }
+.maplibregl-popup-close-button { color: var(--text-dim); font-size: 16px; }
+.maplibregl-popup-close-button:hover { color: var(--accent); background: none; }
 
 .globe-layers {
   position: absolute;
-  top: 10px; left: 44px;
-  z-index: 1000;
+  top: 10px; left: 10px;
+  z-index: 5;
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  max-width: calc(100% - 60px);
+  max-width: calc(100% - 70px);
 }
 .globe-chip {
   background: var(--panel-bg-alt);

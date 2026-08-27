@@ -38,6 +38,19 @@
     }
   }
 
+  async function fetchText(url, { proxyOnFail = true, timeout = 15000 } = {}) {
+    try {
+      const res = await withTimeout(fetch(url), timeout);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.text();
+    } catch (err) {
+      if (!proxyOnFail) throw err;
+      const res = await withTimeout(fetch(CORS_PROXY + encodeURIComponent(url)), timeout);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.text();
+    }
+  }
+
   const memCache = {};
   async function cached(key, ttlMs, fn) {
     const now = Date.now();
@@ -189,9 +202,86 @@
     });
   }
 
+  // ---------- OFAC Specially Designated Nationals list, no key
+  // (Globe tab, sanctions layer). The SDN list has no coordinates — it's a
+  // flat list of sanctioned people/entities/vessels tagged with program
+  // codes — so this aggregates listing counts per program into the same
+  // country buckets used by MockData.SANCTIONS_ZONES. ----------
+  const SANCTIONS_PROGRAM_BUCKETS = [
+    { key: 'Russia', match: /RUSSIA|UKRAINE-EO|BELARUS/i },
+    { key: 'Iran', match: /\bIRAN\b/i },
+    { key: 'Venezuela', match: /VENEZUELA/i },
+    { key: 'North Korea', match: /DPRK|NORTH ?KOREA/i }
+  ];
+
+  function parseCsvLine(line) {
+    const out = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (inQuotes) {
+        if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else inQuotes = false; }
+        else cur += c;
+      } else if (c === '"') inQuotes = true;
+      else if (c === ',') { out.push(cur); cur = ''; }
+      else cur += c;
+    }
+    out.push(cur);
+    return out;
+  }
+
+  async function getSanctionsData() {
+    return cached('ofac-sdn', 24 * 3600000, async () => {
+      const csv = await fetchText('https://www.treasury.gov/ofac/downloads/sdn.csv');
+      if (!csv || csv.length < 1000) throw new Error('empty SDN list');
+      const counts = { Russia: 0, Iran: 0, Venezuela: 0, 'North Korea': 0 };
+      const lines = csv.split('\n');
+      const limit = Math.min(lines.length, 20000);
+      for (let i = 0; i < limit; i++) {
+        if (!lines[i]) continue;
+        const program = parseCsvLine(lines[i])[3] || '';
+        if (!program) continue;
+        for (const bucket of SANCTIONS_PROGRAM_BUCKETS) {
+          if (bucket.match.test(program)) counts[bucket.key]++;
+        }
+      }
+      if (!Object.values(counts).some((n) => n > 0)) throw new Error('no matching sanctions programs found');
+      return counts;
+    });
+  }
+
+  // ---------- NWS severe weather alerts, no key (Globe tab, weather layer,
+  // filtered to Gulf Coast/Permian energy-producing states relevant to
+  // CL=F) ----------
+  const ENERGY_STATES = ['Texas', 'Louisiana', 'Mississippi', 'Alabama', 'Oklahoma'];
+
+  async function getWeatherAlerts() {
+    return cached('nws-alerts', 15 * 60000, async () => {
+      const data = await fetchJSON('https://api.weather.gov/alerts/active?severity=Severe,Extreme');
+      const feats = data.features;
+      if (!Array.isArray(feats)) throw new Error('malformed alert feed');
+      return feats
+        .filter((f) => f.geometry && f.geometry.type === 'Polygon' && ENERGY_STATES.some((s) => (f.properties.areaDesc || '').includes(s)))
+        .map((f) => {
+          const ring = f.geometry.coordinates[0];
+          const lon = ring.reduce((s, c) => s + c[0], 0) / ring.length;
+          const lat = ring.reduce((s, c) => s + c[1], 0) / ring.length;
+          return {
+            id: f.properties.id || f.id,
+            event: f.properties.event,
+            headline: f.properties.headline || f.properties.event,
+            severity: f.properties.severity,
+            areaDesc: f.properties.areaDesc,
+            lat, lon
+          };
+        });
+    });
+  }
+
   global.LiveData = {
     getSettings, saveSettings,
     getQuote, getHistory, getCOT, get13FMeta, getSocialVolume, getNews, getForexFactoryCalendar,
-    getEarthquakes
+    getEarthquakes, getSanctionsData, getWeatherAlerts
   };
 })(window);
