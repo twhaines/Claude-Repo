@@ -716,6 +716,170 @@
     return () => { alive = false; clearInterval(iv); };
   }
 
+  // ---------- Globe: geopolitical risk map ----------
+  const SEVERITY_COLOR = { high: '#ff4d4f', medium: '#ff9500', low: '#eae6df' };
+
+  function severityBadgeHtml(severity) {
+    const c = SEVERITY_COLOR[severity] || SEVERITY_COLOR.low;
+    return `<span class="pill" style="color:${c};border-color:${c}">${severity.toUpperCase()}</span>`;
+  }
+  function affectsHtml(affects) {
+    if (!affects || !affects.length) return '';
+    return `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">${affects.map((a) => `<span class="pill">${a.replace('=F', '')}</span>`).join('')}</div>`;
+  }
+  function globePopupHtml(title, badgeHtml, note, affects) {
+    return `<div style="min-width:180px;">
+      <div style="font-weight:600;margin-bottom:4px;">${title} ${badgeHtml || ''}</div>
+      <div style="font-size:11px;color:var(--text-secondary);line-height:1.5;">${note}</div>
+      ${affectsHtml(affects)}
+    </div>`;
+  }
+  function riskDivIcon(color, pulse) {
+    return L.divIcon({
+      className: 'vt-risk-marker' + (pulse ? ' vt-risk-marker--pulse' : ''),
+      html: `<span style="background:${color}"></span>`,
+      iconSize: [12, 12]
+    });
+  }
+
+  function renderGlobeMap(body, ctx) {
+    body.classList.add('no-pad');
+    const wrap = h(`
+      <div style="position:relative;height:100%;">
+        <div id="globeMapEl" style="position:absolute;inset:0;"></div>
+        <div class="globe-layers" id="globeLayerToggles"></div>
+        <div class="globe-legend">
+          <div><span class="globe-legend__dot" style="background:${SEVERITY_COLOR.high}"></span>Conflict / Sanctions — high</div>
+          <div><span class="globe-legend__dot" style="background:${SEVERITY_COLOR.medium}"></span>medium</div>
+          <div><span class="globe-legend__dot" style="background:#4d9fff"></span>Chokepoint (reference)</div>
+          <div><span class="globe-legend__dot" style="background:#ffd166"></span>Earthquake M2.5+ (live)</div>
+        </div>
+      </div>`);
+    body.appendChild(wrap);
+    const mapEl = wrap.querySelector('#globeMapEl');
+    const toggleEl = wrap.querySelector('#globeLayerToggles');
+
+    const map = L.map(mapEl, { worldCopyJump: true, minZoom: 2, maxZoom: 8 }).setView([20, 15], 2);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+      subdomains: 'abcd', maxZoom: 19
+    }).addTo(map);
+
+    const layerGroups = {
+      conflict: L.layerGroup(), sanctions: L.layerGroup(), chokepoints: L.layerGroup(), quakes: L.layerGroup()
+    };
+    M.CONFLICT_ZONES.forEach((z) => {
+      L.marker([z.lat, z.lon], { icon: riskDivIcon(SEVERITY_COLOR[z.severity], z.severity === 'high') })
+        .bindPopup(globePopupHtml(z.name, severityBadgeHtml(z.severity), z.note, z.affects))
+        .addTo(layerGroups.conflict);
+    });
+    M.SANCTIONS_ZONES.forEach((z) => {
+      L.marker([z.lat, z.lon], { icon: riskDivIcon(SEVERITY_COLOR[z.severity], false) })
+        .bindPopup(globePopupHtml(z.name + ' — sanctions', severityBadgeHtml(z.severity), z.note, z.affects))
+        .addTo(layerGroups.sanctions);
+    });
+    M.CHOKEPOINTS.forEach((z) => {
+      L.marker([z.lat, z.lon], { icon: riskDivIcon('#4d9fff', false) })
+        .bindPopup(globePopupHtml(z.name, '<span class="pill">CHOKEPOINT</span>', z.note, z.affects))
+        .addTo(layerGroups.chokepoints);
+    });
+
+    const LAYER_DEFS = [
+      { key: 'conflict', label: 'Conflict Zones', group: layerGroups.conflict },
+      { key: 'sanctions', label: 'Sanctions', group: layerGroups.sanctions },
+      { key: 'chokepoints', label: 'Chokepoints', group: layerGroups.chokepoints },
+      { key: 'quakes', label: 'Quakes M2.5+', group: layerGroups.quakes }
+    ];
+    const enabled = ctx.config.layers || LAYER_DEFS.map((l) => l.key);
+    LAYER_DEFS.forEach((l) => { if (enabled.includes(l.key)) l.group.addTo(map); });
+
+    toggleEl.innerHTML = LAYER_DEFS.map((l) => `<button class="globe-chip ${enabled.includes(l.key) ? 'active' : ''}" data-layer="${l.key}">${l.label}</button>`).join('');
+    toggleEl.querySelectorAll('[data-layer]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const def = LAYER_DEFS.find((l) => l.key === btn.dataset.layer);
+        if (map.hasLayer(def.group)) { map.removeLayer(def.group); btn.classList.remove('active'); }
+        else { def.group.addTo(map); btn.classList.add('active'); }
+        ctx.setConfig({ layers: LAYER_DEFS.filter((l) => map.hasLayer(l.group)).map((l) => l.key) });
+      });
+    });
+
+    function onFocus(e) {
+      if (!e.detail) return;
+      map.flyTo([e.detail.lat, e.detail.lon], Math.max(map.getZoom(), 4), { duration: 0.8 });
+    }
+    window.addEventListener('vt-globe-focus', onFocus);
+
+    async function loadQuakes() {
+      try {
+        const quakes = await LD.getEarthquakes();
+        layerGroups.quakes.clearLayers();
+        quakes.slice(0, 60).forEach((q) => {
+          L.circleMarker([q.lat, q.lon], {
+            radius: Math.max(4, q.mag * 2.2), color: '#ffd166', weight: 1, fillColor: '#ffd166', fillOpacity: 0.35
+          }).bindPopup(globePopupHtml(`M${q.mag.toFixed(1)} — ${q.name}`,
+            '<span class="pill" style="color:var(--green);border-color:var(--green-dim)">LIVE</span>',
+            `Detected ${new Date(q.time).toLocaleString()} · <a href="${q.url}" target="_blank" rel="noopener" style="color:var(--accent)">USGS report</a>`, [])).addTo(layerGroups.quakes);
+        });
+        ctx.setBadge('live');
+      } catch (e) {
+        ctx.setBadge('sim', 'Earthquake layer: ' + e.message + ' — conflict/sanctions/chokepoints are curated reference data, not a live feed');
+      }
+    }
+    loadQuakes();
+    const iv = setInterval(loadQuakes, 10 * 60000);
+
+    const ro = new ResizeObserver(() => map.invalidateSize());
+    ro.observe(body);
+
+    return () => { clearInterval(iv); ro.disconnect(); window.removeEventListener('vt-globe-focus', onFocus); map.remove(); };
+  }
+
+  function severityRank(sev) { return sev === 'high' ? 3 : sev === 'medium' ? 2 : sev === 'low' ? 1 : 0; }
+
+  function renderGlobeFeed(body, ctx) {
+    const wrap = h(`<div id="globeFeedList"></div>`);
+    body.appendChild(wrap);
+    let alive = true;
+
+    function row(item) {
+      return `<div class="globe-feed-row" data-lat="${item.lat}" data-lon="${item.lon}" data-name="${String(item.name).replace(/"/g, '&quot;')}">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+          <b>${item.name}</b>
+          <span class="pill" style="color:${item.color};border-color:${item.color};white-space:nowrap;">${item.tag}</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-secondary);margin:3px 0;line-height:1.4;">${item.note}</div>
+        ${affectsHtml(item.affects)}
+      </div>`;
+    }
+
+    async function paint() {
+      const staticItems = [
+        ...M.CONFLICT_ZONES.map((z) => ({ name: z.name, lat: z.lat, lon: z.lon, note: z.note, affects: z.affects, tag: 'CONFLICT · ' + z.severity.toUpperCase(), color: SEVERITY_COLOR[z.severity], rank: severityRank(z.severity) + 10 })),
+        ...M.SANCTIONS_ZONES.map((z) => ({ name: z.name, lat: z.lat, lon: z.lon, note: z.note, affects: z.affects, tag: 'SANCTIONS · ' + z.severity.toUpperCase(), color: SEVERITY_COLOR[z.severity], rank: severityRank(z.severity) + 5 })),
+        ...M.CHOKEPOINTS.map((z) => ({ name: z.name, lat: z.lat, lon: z.lon, note: z.note, affects: z.affects, tag: 'CHOKEPOINT', color: '#4d9fff', rank: 1 }))
+      ];
+      let quakeItems = [];
+      let live = true;
+      let reason;
+      try {
+        const quakes = await LD.getEarthquakes();
+        quakeItems = quakes.slice(0, 10).map((q) => ({ name: q.name, lat: q.lat, lon: q.lon, note: `M${q.mag.toFixed(1)} earthquake · ${new Date(q.time).toLocaleString()}`, affects: [], tag: 'QUAKE', color: '#ffd166', rank: q.mag }));
+      } catch (e) { live = false; reason = e.message; }
+      if (!alive) return;
+      ctx.setBadge(live ? 'live' : 'sim', reason);
+      const all = staticItems.concat(quakeItems).sort((a, b) => b.rank - a.rank);
+      wrap.innerHTML = all.map(row).join('');
+      wrap.querySelectorAll('.globe-feed-row').forEach((el) => {
+        el.addEventListener('click', () => {
+          window.dispatchEvent(new CustomEvent('vt-globe-focus', { detail: { lat: +el.dataset.lat, lon: +el.dataset.lon, name: el.dataset.name } }));
+        });
+      });
+    }
+    paint();
+    const iv = setInterval(paint, 10 * 60000);
+    return () => { alive = false; clearInterval(iv); };
+  }
+
   function render13F(body) {
     const wrap = h(`
       <div style="display:flex;flex-direction:column;height:100%;">
@@ -988,6 +1152,8 @@
     { id: 'custom-index', code: 'CI', category: 'Markets', title: 'Custom Index', desc: 'Weighted basket', size: 'md', render: renderCustomIndex },
     { id: 'live-news', code: 'LN', category: 'News', title: 'Live News', desc: 'Wire headlines', size: 'md', render: renderLiveNews },
     { id: 'economic-calendar', code: 'EC', category: 'News', title: 'Economic Calendar', desc: 'Macro data drops', size: 'md', render: renderEconCalendar },
+    { id: 'globe-map', code: 'GM', category: 'Globe', title: 'Global Risk Map', desc: 'Conflict, sanctions, chokepoints, quakes', size: 'lg', render: renderGlobeMap },
+    { id: 'globe-feed', code: 'GF', category: 'Globe', title: 'Risk Feed', desc: 'Tap a row to focus the map', size: 'md', render: renderGlobeFeed },
     { id: 'whales-13f', code: 'WH', category: 'Community', title: '13F Whales', desc: 'Institutional filings', size: 'lg', render: render13F },
     { id: 'risk-calculator', code: 'RC', category: 'Community', title: 'Risk Calculator', desc: 'Position sizing', size: 'sm', render: renderRiskCalc },
     { id: 'market-mood', code: 'MM', category: 'Community', title: 'Market Mood', desc: 'Tracks the chart above', size: 'sm', render: renderMarketMood },
